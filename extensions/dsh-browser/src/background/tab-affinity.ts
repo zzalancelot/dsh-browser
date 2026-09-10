@@ -10,6 +10,9 @@
  * asking again, and `ask-again` reverses it without disturbing the binding.
  * Pinning never widens what the tools may touch — the target is still exactly
  * the tab the user already approved — and any change of binding clears it.
+ * `autoFollow` is the durable opposite preference: once enabled, a manual tab
+ * switch retargets tools to the newly active tab without a handoff prompt, and
+ * it overrides a prior `keep-always` pin for that switch.
  *
  * @module
  */
@@ -39,6 +42,8 @@ export interface TabAffinityState {
   active: AffinityTab | null
   /** True once the user chose `keep-always`; tab switches stop prompting. */
   pinned: boolean
+  /** True when settings ask the assistant to follow every manual tab switch. */
+  autoFollow: boolean
 }
 
 export type TabTargetResolution =
@@ -60,6 +65,7 @@ export class TabAffinityController {
   private active: AffinityTab | null = null
   private keptActiveTabId: number | null = null
   private pinned = false
+  private autoFollow = false
   private hasBound = false
   private lost = false
   private revision = 0
@@ -73,7 +79,24 @@ export class TabAffinityController {
       controlled: this.controlled === null ? null : { ...this.controlled },
       active: this.active === null ? null : { ...this.active },
       pinned: this.pinned,
+      autoFollow: this.autoFollow,
     }
+  }
+
+  /**
+   * Apply the durable auto-follow preference from settings.
+   *
+   * Enabling while a handoff (or pinned background mismatch) is already open
+   * immediately follows the active tab, matching a manual "follow" choice.
+   */
+  setAutoFollow(enabled: boolean): boolean {
+    const previous = this.autoFollow
+    this.autoFollow = enabled
+    let followed = false
+    if (enabled) followed = this.followActiveIfDetached()
+    if (previous === enabled && !followed) return false
+    if (!followed) this.revision += 1
+    return true
   }
 
   /** Associate a session with its controlled tab. */
@@ -151,6 +174,7 @@ export class TabAffinityController {
     const previousActive = this.active
     const previousControlled = this.controlled
     const previousKept = this.keptActiveTabId
+    const previousPinned = this.pinned
     this.active = { ...tab }
     if (this.controlled?.tabId === tab.tabId) {
       this.controlled = { ...tab }
@@ -158,7 +182,8 @@ export class TabAffinityController {
     } else if (previousActive?.tabId !== tab.tabId) {
       this.keptActiveTabId = null
     }
-    return this.bumpIfChanged(previousActive, previousControlled, previousKept)
+    if (this.autoFollow) this.followActiveIfDetached({ bump: false })
+    return this.bumpIfChanged(previousActive, previousControlled, previousKept, previousPinned)
   }
 
   /** Refresh title/URL metadata without interpreting it as a tab switch. */
@@ -421,18 +446,43 @@ export class TabAffinityController {
   private status(): TabAffinityStatus {
     if (this.controlled === null) return this.lost ? 'lost' : 'unbound'
     if (this.active?.tabId === this.controlled.tabId) return 'following'
+    // Auto-follow only retargets on a real tab switch (`observeActive`). A
+    // panel session focus can leave the binding briefly detached; suppress the
+    // handoff prompt there and keep tools on the session's controlled tab.
+    if (this.autoFollow) return 'background'
     if (this.active !== null && !this.pinned && this.keptActiveTabId !== this.active.tabId) return 'handoff'
     return 'background'
+  }
+
+  /**
+   * Retarget tools to the active tab when auto-follow is on and the user has
+   * left the controlled page. Returns true when the binding changed.
+   */
+  private followActiveIfDetached(options: { bump?: boolean } = {}): boolean {
+    if (!this.autoFollow || this.active === null || this.controlled === null || this.lost) return false
+    if (this.active.tabId === this.controlled.tabId) return false
+    this.controlled = { ...this.active }
+    this.keptActiveTabId = null
+    this.pinned = false
+    this.hasBound = true
+    this.lost = false
+    if (this.focusedSessionId !== null) {
+      this.sessionTabs.set(this.focusedSessionId, { ...this.active })
+    }
+    if (options.bump !== false) this.revision += 1
+    return true
   }
 
   private bumpIfChanged(
     previousActive: AffinityTab | null,
     previousControlled: AffinityTab | null,
     previousKept: number | null,
+    previousPinned: boolean = this.pinned,
   ): boolean {
     const changed = !sameTab(previousActive, this.active)
       || !sameTab(previousControlled, this.controlled)
       || previousKept !== this.keptActiveTabId
+      || previousPinned !== this.pinned
     if (changed) this.revision += 1
     return changed
   }

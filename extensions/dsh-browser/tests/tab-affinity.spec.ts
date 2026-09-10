@@ -38,6 +38,64 @@ describe('TabAffinityController', () => {
     expect(affinity.snapshot()).toMatchObject({ status: 'following', controlled: { tabId: 2 } })
   })
 
+  it('auto-follows the active tab when the durable preference is enabled', () => {
+    const affinity = new TabAffinityController()
+    affinity.observeActive(tab(1))
+    affinity.bindInitial(tab(1))
+    expect(affinity.setAutoFollow(true)).toBe(true)
+    expect(affinity.snapshot()).toMatchObject({ autoFollow: true, status: 'following', controlled: { tabId: 1 } })
+
+    expect(affinity.observeActive(tab(2))).toBe(true)
+    expect(affinity.snapshot()).toMatchObject({
+      status: 'following',
+      controlled: { tabId: 2 },
+      active: { tabId: 2 },
+      pinned: false,
+      autoFollow: true,
+    })
+    expect(affinity.resolveTarget()).toMatchObject({ kind: 'target', tab: { tabId: 2 } })
+  })
+
+  it('overrides a keep-always pin once auto-follow is enabled', () => {
+    const affinity = new TabAffinityController()
+    affinity.observeActive(tab(1))
+    affinity.bindInitial(tab(1))
+    affinity.observeActive(tab(2))
+    expect(affinity.decide('keep-always', affinity.snapshot().revision)).toBe(true)
+    expect(affinity.snapshot()).toMatchObject({ status: 'background', pinned: true, controlled: { tabId: 1 } })
+
+    expect(affinity.setAutoFollow(true)).toBe(true)
+    expect(affinity.snapshot()).toMatchObject({
+      status: 'following',
+      pinned: false,
+      autoFollow: true,
+      controlled: { tabId: 2 },
+      active: { tabId: 2 },
+    })
+
+    affinity.observeActive(tab(3))
+    expect(affinity.snapshot()).toMatchObject({ status: 'following', controlled: { tabId: 3 } })
+  })
+
+  it('does not raise a handoff when auto-follow is on and a session focus leaves the binding detached', () => {
+    const affinity = new TabAffinityController()
+    affinity.observeActive(tab(1))
+    affinity.bindNewSession('s1', tab(1))
+    affinity.bindNewSession('s2', tab(2))
+    expect(affinity.setAutoFollow(true)).toBe(true)
+    affinity.observeActive(tab(2))
+    expect(affinity.snapshot()).toMatchObject({ status: 'following', controlled: { tabId: 2 } })
+
+    expect(affinity.focusSession('s1')).toBe(true)
+    expect(affinity.snapshot()).toMatchObject({
+      status: 'background',
+      autoFollow: true,
+      controlled: { tabId: 1 },
+      active: { tabId: 2 },
+    })
+    expect(affinity.resolveTarget()).toMatchObject({ kind: 'target', tab: { tabId: 1 } })
+  })
+
   it('keeps operating the bound tab in the background after an explicit keep choice', () => {
     const affinity = new TabAffinityController()
     affinity.observeActive(tab(1))

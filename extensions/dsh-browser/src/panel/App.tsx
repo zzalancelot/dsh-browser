@@ -379,6 +379,9 @@ function TabAffinityBanner({
   onDecision: (decision: TabAffinityDecision) => void
 }): React.JSX.Element | null {
   if (state === null || state.status === 'unbound' || state.status === 'following') return null
+  // Auto-follow already decides tab switches; a transient background mismatch
+  // after session focus should not reopen the handoff chrome.
+  if (state.status === 'background' && state.autoFollow) return null
   const controlled = tabLabel(state.controlled, copy.tabHandoff.closedTab)
   const active = tabLabel(state.active, copy.tabHandoff.unknownTab)
   const lost = state.status === 'lost'
@@ -743,6 +746,7 @@ export function App(): React.JSX.Element {
         trustedActionOrigins: raw?.trustedActionOrigins ?? [],
         approvalNotifications: raw?.approvalNotifications ?? true,
         autoResumeSession: raw?.autoResumeSession ?? true,
+        autoFollowTab: raw?.autoFollowTab ?? false,
       })
     })
   }, [])
@@ -1708,6 +1712,21 @@ export function App(): React.JSX.Element {
               onChange={(event) => setSettings((current) => current === null
                 ? current
                 : { ...current, autoResumeSession: event.target.checked })}
+            />
+            <span className="setting-toggle-control" aria-hidden="true"><span /></span>
+          </label>
+          <label className="setting-toggle">
+            <span className="setting-toggle-copy">
+              <strong>{copy.settings.autoFollowTab}</strong>
+              <small>{copy.settings.autoFollowTabHelp}</small>
+            </span>
+            <input
+              className="setting-toggle-input"
+              type="checkbox"
+              checked={settings?.autoFollowTab ?? false}
+              onChange={(event) => setSettings((current) => current === null
+                ? current
+                : { ...current, autoFollowTab: event.target.checked })}
             />
             <span className="setting-toggle-control" aria-hidden="true"><span /></span>
           </label>
