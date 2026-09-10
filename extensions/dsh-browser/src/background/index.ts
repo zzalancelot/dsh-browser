@@ -93,6 +93,8 @@ export interface Settings {
   approvalNotifications: boolean
   /** Restore the current tab and page path's conversation when the panel reopens. */
   autoResumeSession: boolean
+  /** Follow the user's current tab on every switch without a handoff prompt. */
+  autoFollowTab: boolean
 }
 
 const SETTINGS_DEFAULTS: Settings = {
@@ -104,6 +106,7 @@ const SETTINGS_DEFAULTS: Settings = {
   trustedActionOrigins: [],
   approvalNotifications: true,
   autoResumeSession: true,
+  autoFollowTab: false,
 }
 
 /**
@@ -265,9 +268,31 @@ async function persistSettings(next: Partial<Settings>): Promise<void> {
   const accessRevision = changesUnrestrictedAccess ? ++unrestrictedAccessRevision : unrestrictedAccessRevision
   const updated = normalizeSettings({ ...settings, ...next })
   const revokesUnrestrictedAccess = settings.unrestrictedBrowserAccess && !updated.unrestrictedBrowserAccess
+  const previousControlledTabId = tabAffinity.snapshot().controlled?.tabId
   settings = updated
   if (!updated.unrestrictedBrowserAccess) unrestrictedAccessActive = false
   syncSelectionWatch()
+  const autoFollowChanged = tabAffinity.setAutoFollow(updated.autoFollowTab)
+  const followed = autoFollowChanged
+    && previousControlledTabId !== undefined
+    && tabAffinity.snapshot().controlled?.tabId !== previousControlledTabId
+  if (autoFollowChanged) {
+    persistTabAffinity()
+    broadcastTabAffinity()
+  }
+  if (followed) {
+    const controlled = tabAffinity.snapshot().controlled
+    const sid = tabAffinity.focusedSession()
+    if (controlled !== null) {
+      resetTabSnapshot(controlled.tabId)
+      if (sid !== null) {
+        void pageSessionContexts.ready.then(() => {
+          pageSessionContexts.bind(sid, { id: controlled.tabId, ...controlled })
+        })
+        void refreshFollowedPage(sid, controlled.tabId)
+      }
+    }
+  }
   let accessTransition: Promise<void> | undefined
   if (revokesUnrestrictedAccess) {
     let trackedRevocation!: Promise<void>
@@ -312,6 +337,7 @@ function normalizeSettings(candidate: Settings): Settings {
     trustedActionOrigins: trusted,
     approvalNotifications: candidate.approvalNotifications !== false,
     autoResumeSession: candidate.autoResumeSession !== false,
+    autoFollowTab: candidate.autoFollowTab === true,
   }
 }
 
@@ -320,6 +346,7 @@ let settingsLoaded = false
 const settingsReady = loadSettings().then((loaded) => {
   settings = loaded
   unrestrictedAccessActive = loaded.unrestrictedBrowserAccess
+  tabAffinity.setAutoFollow(loaded.autoFollowTab)
   settingsLoaded = true
 })
 
@@ -593,9 +620,10 @@ function persistTabAffinity(): void {
 }
 
 function observeActiveSummary(summary: AffinityTab): void {
-  const previousStatus = tabAffinity.snapshot().status
+  const previous = tabAffinity.snapshot()
   if (!tabAffinity.observeActive(summary)) return
-  if (previousStatus !== 'handoff' && tabAffinity.snapshot().status === 'handoff') {
+  const next = tabAffinity.snapshot()
+  if (previous.status !== 'handoff' && next.status === 'handoff') {
     const focused = tabAffinity.focusedSession()
     if (focused !== null) {
       activeFollowRefreshes.get(focused)?.controller.abort()
@@ -604,8 +632,33 @@ function observeActiveSummary(summary: AffinityTab): void {
       cancelPendingApprovals()
     }
   }
+  const autoFollowed = settings.autoFollowTab
+    && previous.controlled !== null
+    && next.controlled !== null
+    && previous.controlled.tabId !== next.controlled.tabId
+    && next.status === 'following'
+  if (autoFollowed) {
+    const focused = tabAffinity.focusedSession()
+    if (focused !== null) {
+      activeFollowRefreshes.get(focused)?.controller.abort()
+      cancelPendingApprovals(focused)
+    } else {
+      cancelPendingApprovals()
+    }
+    resetTabSnapshot(next.controlled.tabId)
+  }
   persistTabAffinity()
   broadcastTabAffinity()
+  if (autoFollowed) {
+    const sid = tabAffinity.focusedSession()
+    const controlled = next.controlled
+    if (sid !== null && controlled !== null) {
+      void pageSessionContexts.ready.then(() => {
+        pageSessionContexts.bind(sid, { id: controlled.tabId, ...controlled })
+      })
+      void refreshFollowedPage(sid, controlled.tabId)
+    }
+  }
 }
 
 function observeActiveTab(tab: chrome.tabs.Tab): void {
