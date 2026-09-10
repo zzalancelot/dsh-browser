@@ -1073,11 +1073,15 @@ function commitTabAffinityRebind(
   broadcastTabAffinity()
 }
 
-async function followModelSelectedTab(tab: chrome.tabs.Tab, sessionId?: string): Promise<void> {
+async function followModelSelectedTab(
+  tab: chrome.tabs.Tab,
+  sessionId?: string,
+  options: { activate?: boolean } = {},
+): Promise<void> {
   const summary = summarizeTab(tab)
   if (summary === null) throw new Error('the selected tab has no usable identifier')
   await pageSessionContexts.ready
-  commitTabAffinityRebind(summary, sessionId, 'background')
+  commitTabAffinityRebind(summary, sessionId, options.activate === false ? 'background' : 'active')
 }
 
 /** 把协商的快照预算下发到受控页（尚未绑定时使用活动页）。 */
@@ -1154,7 +1158,7 @@ function routeToolCall(call: ToolCall): void {
       {
         unrestrictedAccess,
         ...(controlledTabId === undefined ? {} : { controlledTabId }),
-        followTab: (tab) => followModelSelectedTab(tab, call.sessionId),
+        followTab: (tab, options) => followModelSelectedTab(tab, call.sessionId, options),
         commitAction,
         rollbackActionCommit,
       },

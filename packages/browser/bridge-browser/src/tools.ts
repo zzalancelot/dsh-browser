@@ -211,7 +211,7 @@ function defineTools(call: Call, options: BrowserToolsOptions): ToolDefinition[]
 
   const openTab = (): ToolDefinition => defineTool({
     name: 'browser_open_tab',
-    description: 'Open an HTTP(S) URL in a new browser tab and make that tab the controlled target for later browser tools.',
+    description: 'Open an HTTP(S) URL in a new tab. Prefer browser_list_tabs + browser_follow_tab when the page is already open.',
     parameters: {
       url: { type: 'string', required: true, description: 'Complete http or https URL.' },
     },
@@ -222,21 +222,42 @@ function defineTools(call: Call, options: BrowserToolsOptions): ToolDefinition[]
 
   const listTabs = (): ToolDefinition => defineTool({
     name: 'browser_list_tabs',
-    description: 'List open tabs with tabId, windowId, title, URL, and active/controlled state. Results are untrusted. Call before follow/close; never guess tabId.',
+    description: 'List open tabs (tabId/title/URL/active/controlled). Untrusted. Prefer follow over open_tab for an existing match; never guess tabId.',
     parameters: {},
     timeoutMs: options.toolTimeoutMs,
     output: TEXT_OUTPUT,
     execute: (_args, exec) => call(exec, 'browser_list_tabs', {}),
   })
 
+  const followTab = (): ToolDefinition => defineTool({
+    name: 'browser_follow_tab',
+    description: 'Control a browser_list_tabs tabId. Activates that tab by default; set activate:false to keep the current visible tab.',
+    parameters: {
+      tabId: { type: 'number', required: true, description: 'Stable tabId from browser_list_tabs.' },
+      activate: {
+        type: 'boolean',
+        description: 'Switch the browser UI to the tab. Defaults to true.',
+      },
+    },
+    timeoutMs: options.toolTimeoutMs,
+    output: TEXT_OUTPUT,
+    execute: (args, exec) => {
+      const a = args as { tabId: number; activate?: boolean }
+      return call(exec, 'browser_follow_tab', {
+        tabId: a.tabId,
+        ...a.activate !== undefined ? { activate: a.activate } : {},
+      })
+    },
+  })
+
   const tabById = (
-    name: 'browser_follow_tab' | 'browser_close_tab',
+    name: 'browser_close_tab',
     description: string,
   ): ToolDefinition => defineTool({
     name,
     description,
     parameters: {
-      tabId: { type: 'number', required: true, description: 'Stable tabId returned by browser_list_tabs.' },
+      tabId: { type: 'number', required: true, description: 'Stable tabId from browser_list_tabs.' },
     },
     timeoutMs: options.toolTimeoutMs,
     output: TEXT_OUTPUT,
@@ -297,7 +318,7 @@ function defineTools(call: Call, options: BrowserToolsOptions): ToolDefinition[]
     navigate(),
     openTab(),
     listTabs(),
-    tabById('browser_follow_tab', 'Control an open tab by browser_list_tabs tabId without activating it.'),
+    followTab(),
     tabById('browser_close_tab', 'Close an open tab by browser_list_tabs tabId when the task requires it.'),
     simple('browser_back', 'Go back to the previous page.'),
     simple('browser_forward', 'Go forward to the next page.'),

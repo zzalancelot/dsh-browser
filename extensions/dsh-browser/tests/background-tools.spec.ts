@@ -75,8 +75,10 @@ function mockChrome(options: {
   const reload = vi.fn(async () => undefined)
   const remove = vi.fn(async () => undefined)
   const getAllFrames = vi.fn(async () => currentFrames())
+  const windowsUpdate = vi.fn(async (windowId: number, updateInfo: chrome.windows.UpdateInfo) => ({ id: windowId, ...updateInfo }))
   vi.stubGlobal('chrome', {
     tabs: { query, get, sendMessage, update, goBack, goForward, reload, remove },
+    windows: { update: windowsUpdate },
     scripting: { executeScript },
     webNavigation: { getAllFrames },
     runtime: {
@@ -95,7 +97,7 @@ function mockChrome(options: {
       listener({ type: 'DSH_CONTENT_READY' }, { tab: { id: tabId }, frameId, documentId } as chrome.runtime.MessageSender)
     }
   }
-  return { emitContentReady, executeScript, get, getAllFrames, goBack, goForward, query, reload, remove, sendMessage, update }
+  return { emitContentReady, executeScript, get, getAllFrames, goBack, goForward, query, reload, remove, sendMessage, update, windowsUpdate }
 }
 
 afterEach(() => {
@@ -258,7 +260,7 @@ describe('dispatchToolCall', () => {
     expect(chromeMock.sendMessage).not.toHaveBeenCalled()
   })
 
-  it('lists, follows, and closes selected tabs without activating them', async () => {
+  it('lists open tabs, switches to a selected tab by default, and closes without activating when requested', async () => {
     const tabs = [
       managedTab(11, { active: true, title: 'Inbox', url: 'https://mail.example/inbox' }),
       managedTab(12, { windowId: 2, title: 'Docs', url: 'https://docs.example/guide' }),
@@ -280,17 +282,35 @@ describe('dispatchToolCall', () => {
     await expect(dispatchToolCall(
       { id: 'follow-tab', name: 'browser_follow_tab', args: { tabId: 12 } },
       'auto', undefined, authorize, undefined, undefined, undefined, context,
-    )).resolves.toMatchObject({ ok: true })
-    expect(followTab).toHaveBeenCalledWith(expect.objectContaining({ id: 12 }))
+    )).resolves.toMatchObject({
+      ok: true,
+      result: { text: expect.stringContaining('Switched to tab 12') },
+    })
+    expect(followTab).toHaveBeenCalledWith(expect.objectContaining({ id: 12 }), { activate: true })
+    expect(chromeMock.update).toHaveBeenCalledWith(12, { active: true })
+    expect(chromeMock.windowsUpdate).toHaveBeenCalledWith(2, { focused: true })
+
+    followTab.mockClear()
+    chromeMock.update.mockClear()
+    chromeMock.windowsUpdate.mockClear()
+    await expect(dispatchToolCall(
+      { id: 'follow-background', name: 'browser_follow_tab', args: { tabId: 12, activate: false } },
+      'auto', undefined, authorize, undefined, undefined, undefined, context,
+    )).resolves.toMatchObject({
+      ok: true,
+      result: { text: expect.stringContaining('without changing the visible tab') },
+    })
+    expect(followTab).toHaveBeenCalledWith(expect.objectContaining({ id: 12 }), { activate: false })
     expect(chromeMock.update).not.toHaveBeenCalled()
+    expect(chromeMock.windowsUpdate).not.toHaveBeenCalled()
 
     await expect(dispatchToolCall(
       { id: 'close-tab', name: 'browser_close_tab', args: { tabId: 12 } },
       'auto', undefined, authorize, undefined, undefined, undefined, context,
     )).resolves.toMatchObject({ ok: true })
-    expect(chromeMock.get).toHaveBeenCalledTimes(4)
+    expect(chromeMock.get).toHaveBeenCalledTimes(6)
     expect(chromeMock.remove).toHaveBeenCalledWith(12)
-    expect(commitAction).toHaveBeenCalledTimes(2)
+    expect(commitAction).toHaveBeenCalledTimes(3)
   })
 
   it('skips sharing blocks and approval prompts only in unrestricted mode', async () => {
