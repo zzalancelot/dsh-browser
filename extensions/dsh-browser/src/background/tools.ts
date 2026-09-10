@@ -112,8 +112,8 @@ export interface TabManagementContext {
   unrestrictedAccess: boolean
   /** Controlled tab for the calling session, when one still exists. */
   controlledTabId?: number
-  /** Rebind subsequent tools to one existing tab without activating it. */
-  followTab?: (tab: chrome.tabs.Tab) => void | Promise<void>
+  /** Rebind subsequent tools to one existing tab; optionally activate it. */
+  followTab?: (tab: chrome.tabs.Tab, options?: { activate: boolean }) => void | Promise<void>
   /** Mark the point after which a state-changing operation cannot be withdrawn. */
   commitAction?: () => void
   /** Restore withdrawability when a content-script action was not delivered. */
@@ -517,6 +517,11 @@ function requestedTabId(args: Record<string, unknown>): number | undefined {
   return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
 }
 
+/** Whether follow should also bring the tab to the front. Defaults to true. */
+function requestedActivate(args: Record<string, unknown>): boolean {
+  return args.activate !== false
+}
+
 function tabUrl(tab: chrome.tabs.Tab): string {
   return tab.url ?? tab.pendingUrl ?? ''
 }
@@ -547,11 +552,14 @@ function tabManagementApproval(call: ToolCall, tab?: chrome.tabs.Tab): ApprovalP
   const url = tab === undefined ? '' : tabUrl(tab)
   const origin = originFromUrl(url)
   const display = approvalDisplayUrl(url)
+  const activate = call.name === 'browser_follow_tab' && requestedActivate(call.args)
   return {
     kind: 'action',
     action: call.name,
     summary: call.name === 'browser_follow_tab'
-      ? (locale === 'zh' ? `跟随标签页 ${tab?.id ?? '?'}：${display}` : `Follow tab ${tab?.id ?? '?'}: ${display}`)
+      ? (activate
+        ? (locale === 'zh' ? `切换到标签页 ${tab?.id ?? '?'}：${display}` : `Switch to tab ${tab?.id ?? '?'}: ${display}`)
+        : (locale === 'zh' ? `后台跟随标签页 ${tab?.id ?? '?'}：${display}` : `Follow tab ${tab?.id ?? '?'} in the background: ${display}`))
       : (locale === 'zh' ? `关闭标签页 ${tab?.id ?? '?'}：${display}` : `Close tab ${tab?.id ?? '?'}: ${display}`),
     origins: origin === undefined ? [] : [origin],
     canTrust: false,
@@ -628,11 +636,28 @@ async function dispatchTabManagementTool(
 
   if (call.name === 'browser_follow_tab') {
     if (context.followTab === undefined) return unavailable('The browser could not bind the selected tab in this session.')
+    const activate = requestedActivate(call.args)
     context.commitAction?.()
-    await context.followTab(current)
+    if (activate) {
+      try {
+        await chrome.tabs.update(tabId, { active: true })
+        if (typeof current.windowId === 'number') {
+          await chrome.windows.update(current.windowId, { focused: true })
+        }
+      } catch (error: unknown) {
+        const detail = error instanceof Error ? error.message : String(error)
+        return unavailable(`Tab ${tabId} could not be activated: ${detail}`)
+      }
+      if (isCancelled(call, signal)) return cancelled()
+    }
+    await context.followTab(current, { activate })
     return {
       ok: true,
-      result: { text: `Tab ${tabId} is now the controlled tab. Call browser_snapshot before operating its page.` },
+      result: {
+        text: activate
+          ? `Switched to tab ${tabId} and made it the controlled tab. Call browser_snapshot before operating its page.`
+          : `Tab ${tabId} is now the controlled tab without changing the visible tab. Call browser_snapshot before operating its page.`,
+      },
     }
   }
   if (call.name === 'browser_close_tab') {

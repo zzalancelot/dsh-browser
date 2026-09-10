@@ -17,7 +17,7 @@ dsh 的**浏览器操作端**：让模型直接读取并操作你在浏览器里
 | 滚动 | `browser_scroll` | 视口滚动（up/down/top/bottom） |
 | 导航 | `browser_navigate` / `browser_open_tab` / `browser_back` / `browser_forward` / `browser_reload` | 受控标签页内跳转，或新开标签页并跟随 |
 | 列出标签页 | `browser_list_tabs` | 列出可访问标签页的稳定 ID、标题、URL 和活动/受控状态 |
-| 跟随标签页 | `browser_follow_tab` | 将后续浏览器工具绑定到已列出的标签页，而不激活该标签页 |
+| 跟随标签页 | `browser_follow_tab` | 将后续浏览器工具绑定到已列出的标签页，默认同时切换到该标签页 |
 | 关闭标签页 | `browser_close_tab` | 关闭已列出的标签页 |
 | 读区域 | `browser_get_text` | 懒加载内容 / 局部文本 |
 | 等待 | `browser_wait` | 页面加载与渲染稳定检测 |
