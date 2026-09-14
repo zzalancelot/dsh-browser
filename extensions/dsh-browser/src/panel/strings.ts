@@ -27,6 +27,9 @@ export interface PanelCopy {
     labels: Record<string, string>
     overflow: (shown: string[], total: number) => string
   }
+  controlledPage: {
+    label: string
+  }
   tabHandoff: {
     eyebrow: string
     assistant: string
@@ -259,6 +262,9 @@ const EN: PanelCopy = {
     },
     overflow: (shown, total) => `${shown.join(' → ')} → ${total - shown.length} more`,
   },
+  controlledPage: {
+    label: 'Controlling',
+  },
   tabHandoff: {
     eyebrow: 'Page handoff',
     assistant: 'Assistant',
@@ -490,6 +496,9 @@ const ZH: PanelCopy = {
       browser_wait: '等待页面',
     },
     overflow: (shown, total) => `${shown.join(' → ')} 等${total}个工具`,
+  },
+  controlledPage: {
+    label: '正在控制',
   },
   tabHandoff: {
     eyebrow: '页面交接',
