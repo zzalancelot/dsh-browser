@@ -370,6 +370,46 @@ function tabLabel(tab: AffinityTab | null, unknownTab: string): string {
   }
 }
 
+function tabHostname(tab: AffinityTab | null): string | null {
+  try {
+    const hostname = new URL(tab?.url ?? '').hostname
+    return hostname === '' ? null : hostname
+  } catch {
+    return null
+  }
+}
+
+/** True when the full handoff / background / lost card is visible. */
+function showsTabAffinityBanner(state: TabAffinityState | null): boolean {
+  if (state === null || state.status === 'unbound' || state.status === 'following') return false
+  // Auto-follow already decides tab switches; a transient background mismatch
+  // after session focus should not reopen the handoff chrome.
+  if (state.status === 'background' && state.autoFollow) return false
+  return true
+}
+
+function ControlledPageStrip({
+  state,
+  copy,
+}: {
+  state: TabAffinityState | null
+  copy: PanelCopy
+}): React.JSX.Element | null {
+  if (state === null || state.controlled === null || showsTabAffinityBanner(state)) return null
+  const label = tabLabel(state.controlled, copy.tabHandoff.unknownTab)
+  const host = tabHostname(state.controlled)
+  const detail = host !== null && host !== label ? host : null
+  const tooltip = state.controlled.url.trim() === '' ? label : state.controlled.url
+
+  return (
+    <div className="controlled-page" role="status" title={tooltip}>
+      <span className="controlled-page-label">{copy.controlledPage.label}</span>
+      <span className="controlled-page-title">{label}</span>
+      {detail !== null && <span className="controlled-page-host">{detail}</span>}
+    </div>
+  )
+}
+
 function TabAffinityBanner({
   state,
   copy,
@@ -379,10 +419,7 @@ function TabAffinityBanner({
   copy: PanelCopy
   onDecision: (decision: TabAffinityDecision) => void
 }): React.JSX.Element | null {
-  if (state === null || state.status === 'unbound' || state.status === 'following') return null
-  // Auto-follow already decides tab switches; a transient background mismatch
-  // after session focus should not reopen the handoff chrome.
-  if (state.status === 'background' && state.autoFollow) return null
+  if (!showsTabAffinityBanner(state) || state === null) return null
   const controlled = tabLabel(state.controlled, copy.tabHandoff.closedTab)
   const active = tabLabel(state.active, copy.tabHandoff.unknownTab)
   const lost = state.status === 'lost'
@@ -1976,6 +2013,7 @@ export function App(): React.JSX.Element {
           onStep={(direction) => changeUiScale(stepUiScale(uiScaleRef.current, direction))}
           onReset={() => changeUiScale(DEFAULT_UI_SCALE)} />
       )}
+      <ControlledPageStrip state={tabAffinity} copy={copy} />
       <TabAffinityBanner state={tabAffinity} copy={copy} onDecision={decideTabAffinity} />
       {showSessionPicker && (
         <section className="session-picker" aria-label={copy.app.sessions}>

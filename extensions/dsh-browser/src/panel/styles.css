@@ -119,6 +119,47 @@ textarea:focus-visible {
   background: rgba(255, 255, 255, 0.92);
 }
 
+.controlled-page {
+  display: flex;
+  min-width: 0;
+  flex: 0 0 auto;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 14px 8px;
+  border-bottom: 1px solid rgba(203, 211, 225, 0.72);
+  background: var(--blue-wash);
+  color: var(--ink);
+  font-size: calc(11.5px * var(--ui-scale));
+  line-height: 1.35;
+}
+
+.controlled-page-label {
+  flex: 0 0 auto;
+  color: var(--blue-ink);
+  font-size: calc(10px * var(--ui-scale));
+  font-weight: 600;
+  letter-spacing: 0.06em;
+}
+
+.controlled-page-title {
+  min-width: 0;
+  overflow: hidden;
+  color: var(--ink-strong);
+  font-weight: 550;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.controlled-page-host {
+  min-width: 0;
+  flex: 0 1 auto;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: calc(10.5px * var(--ui-scale));
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
 .tab-affinity {
   position: relative;
   flex: 0 0 auto;
