@@ -188,10 +188,68 @@ describe('registerBrowserTools', () => {
       const params = byName.get(name)!.parameters as { properties: { frame?: { type?: unknown } } }
       expect(params.properties.frame?.type).toBe('number')
     }
-    for (const name of ['browser_snapshot', 'browser_navigate', 'browser_open_tab', 'browser_list_tabs', 'browser_follow_tab', 'browser_close_tab', 'browser_back', 'browser_forward', 'browser_reload']) {
+    for (const name of ['browser_snapshot', 'browser_screenshot', 'browser_navigate', 'browser_open_tab', 'browser_list_tabs', 'browser_follow_tab', 'browser_close_tab', 'browser_back', 'browser_forward', 'browser_reload']) {
       const params = byName.get(name)!.parameters as { properties: { frame?: unknown } }
       expect(params.properties.frame).toBeUndefined()
     }
+  })
+
+  it('admits screenshot bytes into host attachments and renders an image block', async () => {
+    const pngBase64 = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mP8z8BQDwAEhQGAhKmMIQAAAABJRU5ErkJggg=='
+    const saveImages = vi.fn(async () => [{
+      attachmentId: 'att-shot',
+      mediaType: 'image/png',
+      bytes: 68,
+      width: 1,
+      height: 1,
+      name: 'browser-screenshot.png',
+    }])
+    const { bridge, requestTool, registered } = makeHarness()
+    const ctx = {
+      tools: {
+        register: vi.fn((definition: { name: string }) => {
+          registered.push({ name: definition.name, definition: definition as Record<string, unknown> })
+          return () => {}
+        }),
+      },
+      get: vi.fn((name: string) => (name === 'attachments' ? { saveImages } : undefined)),
+    } as unknown as Context
+    requestTool.mockResolvedValueOnce({
+      text: 'Captured a PNG screenshot of the controlled tab viewport.',
+      image: { mediaType: 'image/png', data: pngBase64, name: 'browser-screenshot.png' },
+    })
+    registerBrowserTools(ctx, bridge, { toolTimeoutMs: 1_000, snapshotMaxChars: 12_000, maxInteractiveItems: 60 })
+    const tool = registered.find((r) => r.name === 'browser_screenshot')!
+    const exec = { signal: new AbortController().signal }
+    const result = await (tool.definition.execute as (args: unknown, e: { signal: AbortSignal }) => Promise<unknown>)({}, exec)
+    expect(requestTool).toHaveBeenCalledWith('browser_screenshot', {}, exec.signal, 1_000)
+    expect(saveImages).toHaveBeenCalledOnce()
+    expect(result).toEqual({
+      text: 'Captured a PNG screenshot of the controlled tab viewport.',
+      image: {
+        attachmentId: 'att-shot',
+        mediaType: 'image/png',
+        bytes: 68,
+        width: 1,
+        height: 1,
+        name: 'browser-screenshot.png',
+      },
+    })
+    const output = tool.definition.output as { render: (args: unknown, value: unknown) => unknown }
+    expect(output.render({}, result)).toEqual([
+      { type: 'text', text: 'Captured a PNG screenshot of the controlled tab viewport.' },
+      {
+        type: 'image',
+        attachment: {
+          attachmentId: 'att-shot',
+          mediaType: 'image/png',
+          bytes: 68,
+          width: 1,
+          height: 1,
+          name: 'browser-screenshot.png',
+        },
+      },
+    ])
   })
 
   it('falls back to a no-text payload when the extension returns non-text', async () => {

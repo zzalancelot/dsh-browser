@@ -76,11 +76,13 @@ function mockChrome(options: {
   const remove = vi.fn(async () => undefined)
   const getAllFrames = vi.fn(async () => currentFrames())
   const windowsUpdate = vi.fn(async (windowId: number, updateInfo: chrome.windows.UpdateInfo) => ({ id: windowId, ...updateInfo }))
+  const captureVisibleTab = vi.fn(async () => 'data:image/png;base64,iVBORw0KGgo=')
+  const getCurrentWindow = vi.fn(async () => ({ id: options.tab?.windowId ?? 1 }))
   vi.stubGlobal('chrome', {
-    tabs: { query, get, sendMessage, update, goBack, goForward, reload, remove },
-    windows: { update: windowsUpdate },
+    tabs: { query, get, sendMessage, update, goBack, goForward, reload, remove, captureVisibleTab },
     scripting: { executeScript },
     webNavigation: { getAllFrames },
+    windows: { update: windowsUpdate, getCurrent: getCurrentWindow },
     runtime: {
       onMessage: {
         addListener: (listener: (message: unknown, sender: chrome.runtime.MessageSender) => void) => {
@@ -97,7 +99,22 @@ function mockChrome(options: {
       listener({ type: 'DSH_CONTENT_READY' }, { tab: { id: tabId }, frameId, documentId } as chrome.runtime.MessageSender)
     }
   }
-  return { emitContentReady, executeScript, get, getAllFrames, goBack, goForward, query, reload, remove, sendMessage, update, windowsUpdate }
+  return {
+    captureVisibleTab,
+    emitContentReady,
+    executeScript,
+    get,
+    getAllFrames,
+    getCurrentWindow,
+    goBack,
+    goForward,
+    query,
+    reload,
+    remove,
+    sendMessage,
+    update,
+    windowsUpdate,
+  }
 }
 
 afterEach(() => {
@@ -362,6 +379,49 @@ describe('dispatchToolCall', () => {
       error: { code: 'action-failed' },
     })
     expect(chromeMock.query).not.toHaveBeenCalled()
+  })
+
+  it('captures a PNG of the controlled tab without using the content script', async () => {
+    const chromeMock = mockChrome({
+      tab: { id: 7, windowId: 3, url: 'https://canvas.example/draw', title: 'Canvas', active: true },
+    })
+
+    const answer = await dispatchToolCall(
+      { id: 'shot-1', name: 'browser_screenshot', args: {} },
+      'auto',
+      undefined,
+      undefined,
+      undefined,
+      { id: 7, windowId: 3, url: 'https://canvas.example/draw', title: 'Canvas' },
+    )
+
+    expect(answer).toMatchObject({
+      ok: true,
+      result: {
+        text: expect.stringContaining('Captured a PNG screenshot'),
+        image: {
+          mediaType: 'image/png',
+          data: 'iVBORw0KGgo=',
+          name: 'browser-screenshot.png',
+        },
+      },
+    })
+    expect(chromeMock.captureVisibleTab).toHaveBeenCalledWith(3, { format: 'png' })
+    expect(chromeMock.sendMessage).not.toHaveBeenCalled()
+    expect(chromeMock.executeScript).not.toHaveBeenCalled()
+  })
+
+  it('blocks screenshots when page content sharing is off', async () => {
+    const chromeMock = mockChrome({ tab: { id: 7, url: 'https://example.com' } })
+
+    await expect(dispatchToolCall(
+      { id: 'shot-off', name: 'browser_screenshot', args: {} },
+      'off',
+    )).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'action-failed', message: expect.stringContaining('Page content sharing is disabled') },
+    })
+    expect(chromeMock.captureVisibleTab).not.toHaveBeenCalled()
   })
 
   it('dispatches to an explicitly bound background tab without querying the active tab', async () => {

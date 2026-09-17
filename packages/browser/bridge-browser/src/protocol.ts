@@ -62,7 +62,10 @@ export type RespondResult =
 
 /** Capabilities negotiated in `hello`/`hello.ok`. The extension performs its own actions; these bounds shape page snapshots. */
 export interface BridgeCaps {
-  /** The extension renders page state as text only (no screenshots). */
+  /**
+   * Structured page inventory remains text-first. Visual fallbacks such as
+   * `browser_screenshot` are admitted as host attachments outside this flag.
+   */
   textOnly: true
   /** Upper bound on one rendered snapshot's characters (plugin config, minimum 500). */
   snapshotMaxChars: number

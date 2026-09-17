@@ -102,6 +102,9 @@ describe('approvalPromptForCall', () => {
     )
     expect(approvalPromptForCall(call('browser_snapshot'), 'ask', FRAMES, 'en')?.summary)
       .toBe('Read the current page and accessible iframes')
+    expect(approvalPromptForCall(call('browser_screenshot'), 'ask', FRAMES, 'en')?.summary)
+      .toBe('Capture a screenshot of the current page')
+    expect(approvalPromptForCall(call('browser_screenshot'), 'auto', FRAMES, 'zh')).toBeUndefined()
   })
 })
 
