@@ -3,9 +3,9 @@
  * accessible names, interactive inventory, main-content heuristic, and
  * truncation helpers.
  *
- * The snapshot is the model's entire view of the page (no screenshots), so
- * every helper is written to produce dense, model-usable text under a hard
- * character budget.
+ * The snapshot is the primary text view of the page; browser_screenshot is the
+ * visual fallback when that inventory cannot describe the page. Every helper
+ * is written to produce dense, model-usable text under a hard character budget.
  *
  * @module
  */

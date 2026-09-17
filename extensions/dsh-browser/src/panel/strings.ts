@@ -245,6 +245,7 @@ const EN: PanelCopy = {
     done: 'Done',
     labels: {
       browser_snapshot: 'Read page',
+      browser_screenshot: 'Capture screenshot',
       browser_click: 'Click element',
       browser_type: 'Enter text',
       browser_press: 'Press key',
@@ -480,6 +481,7 @@ const ZH: PanelCopy = {
     done: '完成',
     labels: {
       browser_snapshot: '读取页面',
+      browser_screenshot: '截取页面',
       browser_click: '点击元素',
       browser_type: '填写内容',
       browser_press: '按下按键',

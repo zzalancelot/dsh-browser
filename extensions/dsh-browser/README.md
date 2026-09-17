@@ -4,13 +4,14 @@ English | [中文](README.zh.md)
 
 The **browser-operation end** of dsh: the model reads and operates the browser page you have open — extract content, click elements, fill forms, scroll, and navigate, all in the real page with your login state preserved. The side panel is the conversation entry.
 
-**Two explicit channels**: browser pages are still rendered as structured text (a numbered interactive-element inventory), so browser tools never take screenshots. Separately, a dsh 0.1.2 host can advertise multimodal image limits; the side panel then accepts PNG, JPEG, WebP, and GIF attachments and renders their durable history references.
+**Two explicit channels**: browser pages are rendered as structured text (a numbered interactive-element inventory) by default. When that text cannot describe the page, `browser_screenshot` captures the controlled tab as a visual fallback. Separately, a dsh 0.1.2+ host can advertise multimodal image limits; the side panel then accepts user-attached PNG, JPEG, WebP, and GIF images and renders their durable history references.
 
 ## What the model can do
 
 | Capability | Action | Notes |
 |---|---|---|
 | Read page | `browser_snapshot` | Title/URL/main text/numbered inventory/form fields (sensitive values masked); `delta: true` returns only changes |
+| Capture screenshot | `browser_screenshot` | Visual fallback when snapshot text cannot describe the page (canvas/captcha/scrape failure) |
 | Click element | `browser_click` | Click by inventory number (links/buttons/checkboxes…), React/Vue compatible |
 | Fill forms | `browser_type` | Type text; `replace` clears first |
 | Keys | `browser_press` | Enter/Tab/Escape/arrows etc. |

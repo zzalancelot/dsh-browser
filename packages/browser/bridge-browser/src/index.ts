@@ -263,7 +263,9 @@ function mountBridge(
       order: 107,
       text: 'A browser bridge may be connected. To read or operate the user\'s active browser page, call browser_snapshot '
         + '(text-only; numbered items are the click/type targets), unless the current turn already includes a plugin-provided '
-        + 'followed-page browser_snapshot. Reuse that injected snapshot and its indices directly. Never assume page content you have not snapshotted.',
+        + 'followed-page browser_snapshot. Reuse that injected snapshot and its indices directly. When snapshot text cannot '
+        + 'describe the page (canvas, captcha, graphics, or scrape failure), call browser_screenshot on the same controlled tab. '
+        + 'Never assume page content you have not snapshotted or screenshotted.',
     }), 'bridge-browser: system prompt section')
   }
 
