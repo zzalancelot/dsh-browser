@@ -393,6 +393,8 @@ describe('dispatchToolCall', () => {
       undefined,
       undefined,
       { id: 7, windowId: 3, url: 'https://canvas.example/draw', title: 'Canvas' },
+      undefined,
+      { unrestrictedAccess: false, screenshotEnhancement: true },
     )
 
     expect(answer).toMatchObject({
@@ -411,12 +413,37 @@ describe('dispatchToolCall', () => {
     expect(chromeMock.executeScript).not.toHaveBeenCalled()
   })
 
+  it('blocks screenshots when screenshot enhancement is disabled', async () => {
+    const chromeMock = mockChrome({ tab: { id: 7, url: 'https://example.com' } })
+
+    await expect(dispatchToolCall(
+      { id: 'shot-disabled', name: 'browser_screenshot', args: {} },
+      'auto',
+      undefined,
+      undefined,
+      undefined,
+      { id: 7, url: 'https://example.com' },
+      undefined,
+      { unrestrictedAccess: false, screenshotEnhancement: false },
+    )).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'action-failed', message: expect.stringContaining('Screenshot enhancement is disabled') },
+    })
+    expect(chromeMock.captureVisibleTab).not.toHaveBeenCalled()
+  })
+
   it('blocks screenshots when page content sharing is off', async () => {
     const chromeMock = mockChrome({ tab: { id: 7, url: 'https://example.com' } })
 
     await expect(dispatchToolCall(
       { id: 'shot-off', name: 'browser_screenshot', args: {} },
       'off',
+      undefined,
+      undefined,
+      undefined,
+      { id: 7, url: 'https://example.com' },
+      undefined,
+      { unrestrictedAccess: false, screenshotEnhancement: true },
     )).resolves.toMatchObject({
       ok: false,
       error: { code: 'action-failed', message: expect.stringContaining('Page content sharing is disabled') },

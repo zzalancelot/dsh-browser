@@ -83,6 +83,8 @@ export interface PanelCopy {
     autoResumeSessionHelp: string
     autoFollowTab: string
     autoFollowTabHelp: string
+    screenshotEnhancement: string
+    screenshotEnhancementHelp: string
     trustedOrigins: string
     trustedOriginsHelp: string
     trustedOriginInput: string
@@ -319,6 +321,8 @@ const EN: PanelCopy = {
     autoResumeSessionHelp: 'Reopen the conversation associated with this tab and page path; other pages start a new conversation',
     autoFollowTab: 'Auto-follow current page',
     autoFollowTabHelp: 'When you switch tabs, the assistant follows the page you are viewing without asking for a handoff',
+    screenshotEnhancement: 'Screenshot enhancement',
+    screenshotEnhancementHelp: 'Allow the assistant to capture the controlled tab when text snapshot cannot describe the page (canvas, captcha, graphics). Off by default.',
     trustedOrigins: 'Always-allowed domains',
     trustedOriginsHelp: 'The approval dialog can trust a domain for the current side-panel session only. Domains added here permanently skip action confirmation when every known origin is trusted. Wildcards include the base domain and subdomains, and stay scoped to their scheme and port; `*.example.com` defaults to HTTPS.',
     trustedOriginInput: 'Domain to always trust (e.g. https://example.com or https://*.example.com)',
@@ -555,6 +559,8 @@ const ZH: PanelCopy = {
     autoResumeSessionHelp: '重新打开当前标签页此页面的会话；其他页面会新建会话',
     autoFollowTab: '自动跟随当前页面',
     autoFollowTabHelp: '切换标签页时，助手自动跟随你正在查看的页面，不再弹出页面交接确认',
+    screenshotEnhancement: '截图增强模式',
+    screenshotEnhancementHelp: '开启后，当文本快照无法描述页面（canvas、验证码、图形等）时，助手可截取受控标签页作为视觉兜底。默认关闭。',
     trustedOrigins: '永久免确认域名',
     trustedOriginsHelp: '审批框可只信任本次侧栏会话。这里添加的域名仅在所有已知来源均受信任时免除操作确认。通配符包含主域及其子域，并严格区分协议和端口；`*.example.com` 默认使用 HTTPS。',
     trustedOriginInput: '要永久信任的域名（如 https://example.com 或 https://*.example.com）',

@@ -121,6 +121,11 @@ export function isTabManagementTool(name: string): boolean {
 export interface TabManagementContext {
   /** Skip all browser approval prompts after the user enables unrestricted access. */
   unrestrictedAccess: boolean
+  /**
+   * Allow `browser_screenshot`. Defaults to false (fail closed) unless Settings
+   * → Screenshot enhancement is enabled.
+   */
+  screenshotEnhancement?: boolean
   /** Controlled tab for the calling session, when one still exists. */
   controlledTabId?: number
   /** Rebind subsequent tools to one existing tab; optionally activate it. */
@@ -835,6 +840,16 @@ export async function dispatchToolCall(
   const effectiveBudget = budget ?? { maxItems: 60, maxChars: DEFAULT_SNAPSHOT_MAX_CHARS }
   if (isTabManagementTool(call.name)) {
     return dispatchTabManagementTool(call, effectiveBudget, authorize, signal, tabManagement)
+  }
+  // Screenshot enhancement is opt-in; keep the tool registered but fail closed.
+  if (call.name === 'browser_screenshot' && tabManagement.screenshotEnhancement !== true) {
+    return {
+      ok: false,
+      error: {
+        code: 'action-failed',
+        message: 'Screenshot enhancement is disabled in Settings. Enable Screenshot enhancement to allow visual captures.',
+      },
+    }
   }
   // Privacy boundary: with sharing off, no page content may leave the page.
   if (!tabManagement.unrestrictedAccess
