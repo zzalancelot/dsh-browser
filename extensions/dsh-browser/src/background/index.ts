@@ -96,6 +96,11 @@ export interface Settings {
   autoResumeSession: boolean
   /** Follow the user's current tab on every switch without a handoff prompt. */
   autoFollowTab: boolean
+  /**
+   * Allow `browser_screenshot` as a visual fallback when text inventory cannot
+   * describe the page. Off by default.
+   */
+  screenshotEnhancement: boolean
 }
 
 const SETTINGS_DEFAULTS: Settings = {
@@ -108,6 +113,7 @@ const SETTINGS_DEFAULTS: Settings = {
   approvalNotifications: true,
   autoResumeSession: true,
   autoFollowTab: false,
+  screenshotEnhancement: false,
 }
 
 /**
@@ -339,6 +345,7 @@ function normalizeSettings(candidate: Settings): Settings {
     approvalNotifications: candidate.approvalNotifications !== false,
     autoResumeSession: candidate.autoResumeSession !== false,
     autoFollowTab: candidate.autoFollowTab === true,
+    screenshotEnhancement: candidate.screenshotEnhancement === true,
   }
 }
 
@@ -1164,6 +1171,7 @@ function routeToolCall(call: ToolCall): void {
       undefined,
       {
         unrestrictedAccess,
+        screenshotEnhancement: settings.screenshotEnhancement,
         ...(controlledTabId === undefined ? {} : { controlledTabId }),
         followTab: (tab, options) => followModelSelectedTab(tab, call.sessionId, options),
         commitAction,
@@ -1197,7 +1205,12 @@ function routeToolCall(call: ToolCall): void {
           controller.signal,
           target,
           () => target.id !== undefined && tabAffinity.allowsTarget(target.id, call.sessionId),
-          { unrestrictedAccess, commitAction, rollbackActionCommit },
+          {
+            unrestrictedAccess,
+            screenshotEnhancement: settings.screenshotEnhancement,
+            commitAction,
+            rollbackActionCommit,
+          },
         ))
   ).then(
     async (answer) => {

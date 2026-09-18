@@ -383,7 +383,7 @@ function defineTools(
 
   const screenshot = (): ToolDefinition => defineTool({
     name: 'browser_screenshot',
-    description: `PNG of the controlled tab when snapshot text fails. Prefer snapshot for controls. ${UNTRUSTED_SCREENSHOT_WARNING}`,
+    description: `PNG of the controlled tab when snapshot text fails. Requires Screenshot enhancement in extension Settings. Prefer snapshot for controls. ${UNTRUSTED_SCREENSHOT_WARNING}`,
     parameters: {},
     timeoutMs: options.toolTimeoutMs,
     output: SCREENSHOT_OUTPUT,
