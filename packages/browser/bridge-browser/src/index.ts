@@ -243,6 +243,20 @@ function mountBridge(
     kind: 'exact',
     path: BRIDGE_CONFIG_PATH,
     handler: (req, res) => {
+      // Chromium 142+ / Edge 143+ Local Network Access puts the extension's
+      // fetch to loopback through the CORS checks, so the discovery response
+      // carries the headers and answers the preflight. The payload holds no
+      // secret, and authentication still happens on the WebSocket handshake.
+      const cors = {
+        'access-control-allow-origin': '*',
+        'access-control-allow-methods': 'GET, OPTIONS',
+        'access-control-allow-private-network': 'true',
+      }
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, cors)
+        res.end()
+        return
+      }
       const hostHeader = firstHeaderValue(req.headers['x-forwarded-host'])
         ?? firstHeaderValue(req.headers.host)
       const forwardedProto = firstHeaderValue(req.headers['x-forwarded-proto'])
@@ -256,7 +270,7 @@ function mountBridge(
       if (isLoopbackAddress(req.socket.remoteAddress)) {
         body.token = tokenRes.token
       }
-      res.writeHead(200, { 'content-type': 'application/json' })
+      res.writeHead(200, { 'content-type': 'application/json', ...cors })
       res.end(JSON.stringify(body))
     },
   }

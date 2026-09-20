@@ -295,15 +295,25 @@ describe('real Loader composition', () => {
     expect(browserPrompt).toContain('Reuse that injected snapshot')
     expect(browserPrompt).not.toMatch(/\p{Script=Han}/u)
 
-    // Zero-config discovery endpoint answers with the bridge WebSocket URL.
+    // Zero-config discovery endpoint answers with the bridge WebSocket URL, and
+    // carries the CORS headers plus preflight answer that Chromium 142+ / Edge
+    // 143+ Local Network Access requires of an extension fetching loopback.
     // Loopback callers also receive the bearer token for the host settings copy row.
     const configResponse = await fetch(`http://127.0.0.1:${port}/ext/bridge-config`)
     expect(configResponse.status).toBe(200)
+    expect(configResponse.headers.get('access-control-allow-origin')).toBe('*')
+    expect(configResponse.headers.get('access-control-allow-methods')).toBe('GET, OPTIONS')
+    expect(configResponse.headers.get('access-control-allow-private-network')).toBe('true')
     const config = await configResponse.json() as { wsUrl?: unknown; token?: unknown }
     expect(typeof config.wsUrl).toBe('string')
     expect(config.wsUrl).toBe(`ws://127.0.0.1:${port}/ext/bridge`)
     expect(typeof config.token).toBe('string')
     expect(config.token).toBe(TOKEN)
+
+    const preflight = await fetch(`http://127.0.0.1:${port}/ext/bridge-config`, { method: 'OPTIONS' })
+    expect(preflight.status).toBe(204)
+    expect(preflight.headers.get('access-control-allow-origin')).toBe('*')
+    expect(preflight.headers.get('access-control-allow-private-network')).toBe('true')
     expect(tools.get('browser_click')).toBeDefined()
     expect(tools.get('browser_navigate')).toBeDefined()
 
