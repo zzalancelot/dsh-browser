@@ -52,14 +52,17 @@ describe('Firefox build contract', () => {
     ])
   })
 
-  it('appends EXT_CONNECT_SRC tokens to connect-src without rewriting the store manifest defaults', async () => {
+  it('allows any ws/http(s) host by default so panel settings can target a LAN bridge', async () => {
     const chromeManifest = await readJson<ExtensionManifest>('../manifest.json')
     const base = chromeManifest.content_security_policy.extension_pages
-    expect(base).toContain('ws://127.0.0.1:*')
+    expect(base).toContain('ws://*:*')
+    expect(base).toContain('http://*:*')
+    expect(base).toContain('wss://*:*')
+    expect(base).toContain('https://*:*')
     expect(base).not.toContain('192.168.2.185')
 
     const patched = appendConnectSrc(base, 'ws://192.168.2.185:* http://192.168.2.185:*')
-    expect(patched).toContain('ws://127.0.0.1:*')
+    expect(patched).toContain('ws://*:*')
     expect(patched).toContain('ws://192.168.2.185:*')
     expect(patched).toContain('http://192.168.2.185:*')
     expect(appendConnectSrc(patched, 'ws://192.168.2.185:*')).toBe(patched)
