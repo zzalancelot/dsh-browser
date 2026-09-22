@@ -72,6 +72,7 @@ Playwright / 扩展的配对耗时比为 **1.24**（95% CI **1.16–1.34**）：
 - `browser_press` 只在焦点元素上合成键盘事件，不能用 Tab 真实移动焦点，也不能驱动 IME；需要可信事件的场景需 CDP / `chrome.debugger`（不在本仓库范围）。
 - 嵌套启发式控件带 `depth`；浅层点击无效时，应改点同链路上更高 depth 的项。
 - 视觉隐藏的 input 只反映受控 picker 的当前值；用 `browser_type` 写入它们不会打开面板，也不会更新 React/Vue 组件状态。
+- 扩展通过合成事件（`dispatchEvent`）操作页面，因此 `event.isTrusted` 恒为 `false`；内容脚本无法伪造，只有 CDP / `chrome.debugger` 的可信输入能解决（代价：新增权限 + 浏览器「正在调试」横幅）。**隐身输入**可减少自身机械指纹（默认不写持久 `data-dsh-el`；可选指针轨迹与最小滚动），但不提供、也不承诺规避站点风控的能力。
 
 ## 组成
 

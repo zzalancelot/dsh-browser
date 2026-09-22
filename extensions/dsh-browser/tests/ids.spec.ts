@@ -1,9 +1,14 @@
 // @vitest-environment jsdom
-import { describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it } from 'vitest'
 import { ElementIds } from '../src/content/ids.ts'
+import { resetContentPolicy, setContentPolicy } from '../src/content/policy.ts'
+
+afterEach(() => {
+  resetContentPolicy()
+})
 
 describe('ElementIds', () => {
-  it('assigns stable ids across reconciles', () => {
+  it('assigns stable ids without writing data-dsh-el by default', () => {
     const ids = new ElementIds()
     const a = document.createElement('button')
     const b = document.createElement('button')
@@ -11,11 +16,23 @@ describe('ElementIds', () => {
     const first = ids.indexOf(a)!
     expect(first).toBe(1)
     expect(ids.indexOf(b)).toBe(2)
-    expect(a.getAttribute('data-dsh-el')).toBe('1')
+    expect(a.getAttribute('data-dsh-el')).toBeNull()
+    expect(b.getAttribute('data-dsh-el')).toBeNull()
 
-    // Same set again: ids unchanged, nothing added or removed.
     expect(ids.assign([a, b])).toEqual({ added: 0, removed: 0 })
     expect(ids.indexOf(a)).toBe(first)
+  })
+
+  it('writes data-dsh-el only when the observation attribute policy is enabled', () => {
+    setContentPolicy({ writeObservationAttribute: true })
+    const ids = new ElementIds()
+    const a = document.createElement('button')
+    ids.assign([a])
+    expect(a.getAttribute('data-dsh-el')).toBe('1')
+
+    setContentPolicy({ writeObservationAttribute: false })
+    ids.assign([a])
+    expect(a.getAttribute('data-dsh-el')).toBeNull()
   })
 
   it('drops removed elements and appends ids to new ones', () => {
@@ -26,8 +43,8 @@ describe('ElementIds', () => {
     ids.assign([a, b])
     const result = ids.assign([b, c])
     expect(result).toEqual({ added: 1, removed: 1 })
-    expect(ids.indexOf(b)).toBe(2) // stable
-    expect(ids.indexOf(c)).toBe(3) // fresh id, never reuses the freed one
+    expect(ids.indexOf(b)).toBe(2)
+    expect(ids.indexOf(c)).toBe(3)
     expect(ids.elementByIndex(1)).toBeUndefined()
   })
 

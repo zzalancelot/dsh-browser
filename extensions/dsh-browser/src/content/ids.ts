@@ -4,14 +4,16 @@
  * Numbers are the model's addressing scheme ("click 7"), so they must survive
  * re-snapshots as long as the element itself survives: ids are assigned once
  * per element (WeakMap) and only renumbered when the element set is
- * restructured. `data-dsh-el` attributes are also written so the ids stay
- * observable from the outside.
+ * restructured. Optionally mirrors ids onto `data-dsh-el` when the content
+ * policy enables observation attributes (off by default).
  *
  * @module
  */
 
-/** Attribute written on every inventoried element (observable numbering). */
-const ID_ATTRIBUTE = 'data-dsh-el'
+import { getContentPolicy } from './policy.ts'
+
+/** Attribute optionally written on inventoried elements (debug / observation). */
+export const ID_ATTRIBUTE = 'data-dsh-el'
 
 /**
  * Stable element → id registry. One instance per content-script lifetime.
@@ -28,12 +30,14 @@ export class ElementIds {
    * @returns counts of added and removed elements.
    */
   assign(elements: Element[]): { added: number; removed: number } {
+    const writeAttr = getContentPolicy().writeObservationAttribute
     const seen = new Set(elements)
     let removed = 0
     for (const [id, el] of this.elementById) {
       if (!seen.has(el)) {
         this.elementById.delete(id)
         this.idByElement.delete(el)
+        if (el.hasAttribute(ID_ATTRIBUTE)) el.removeAttribute(ID_ATTRIBUTE)
         removed += 1
       }
     }
@@ -44,8 +48,14 @@ export class ElementIds {
         this.nextId += 1
         this.idByElement.set(el, id)
         this.elementById.set(id, el)
-        el.setAttribute(ID_ATTRIBUTE, String(id))
         added += 1
+      }
+      const id = this.idByElement.get(el)
+      if (id === undefined) continue
+      if (writeAttr) {
+        el.setAttribute(ID_ATTRIBUTE, String(id))
+      } else if (el.hasAttribute(ID_ATTRIBUTE)) {
+        el.removeAttribute(ID_ATTRIBUTE)
       }
     }
     return { added, removed }

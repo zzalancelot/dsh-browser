@@ -87,6 +87,10 @@ export interface PanelCopy {
     screenshotEnhancementHelp: string
     automationSignalsProbe: string
     automationSignalsProbeHelp: string
+    stealthMode: string
+    stealthModeHelp: string
+    writeObservationAttribute: string
+    writeObservationAttributeHelp: string
     trustedOrigins: string
     trustedOriginsHelp: string
     trustedOriginInput: string
@@ -328,6 +332,10 @@ const EN: PanelCopy = {
     screenshotEnhancementHelp: 'Allow the assistant to capture the controlled tab when text snapshot cannot describe the page (canvas, captcha, graphics). Off by default.',
     automationSignalsProbe: 'Automation signals probe',
     automationSignalsProbeHelp: 'Allow the assistant to scan the controlled page for client-visible anti-automation / captcha signals. Heuristic only; off by default.',
+    stealthMode: 'Stealth input',
+    stealthModeHelp: 'Reduce mechanical click fingerprints: short pointer trail before clicks, and scroll only when the target is off-screen. On by default. Does not make events trusted (isTrusted stays false).',
+    writeObservationAttribute: 'Write observation attributes',
+    writeObservationAttributeHelp: 'Mirror inventory numbers onto data-dsh-el attributes for debugging. Off by default — the attribute is a durable page fingerprint.',
     trustedOrigins: 'Always-allowed domains',
     trustedOriginsHelp: 'The approval dialog can trust a domain for the current side-panel session only. Domains added here permanently skip action confirmation when every known origin is trusted. Wildcards include the base domain and subdomains, and stay scoped to their scheme and port; `*.example.com` defaults to HTTPS.',
     trustedOriginInput: 'Domain to always trust (e.g. https://example.com or https://*.example.com)',
@@ -569,6 +577,10 @@ const ZH: PanelCopy = {
     screenshotEnhancementHelp: '开启后，当文本快照无法描述页面（canvas、验证码、图形等）时，助手可截取受控标签页作为视觉兜底。默认关闭。',
     automationSignalsProbe: '自动化信号探针',
     automationSignalsProbeHelp: '开启后，助手可扫描受控页面上客户端可见的反自动化/验证码信号（启发式，非结论）。默认关闭。',
+    stealthMode: '隐身输入',
+    stealthModeHelp: '减轻机械点击指纹：点击前补短暂指针轨迹，且仅在目标离开视口时滚动。默认开启。无法把事件变成 isTrusted（内容脚本限制）。',
+    writeObservationAttribute: '写入观察属性',
+    writeObservationAttributeHelp: '调试时把清单编号写到 data-dsh-el 属性。默认关闭——该属性是可被页面检测的持久指纹。',
     trustedOrigins: '永久免确认域名',
     trustedOriginsHelp: '审批框可只信任本次侧栏会话。这里添加的域名仅在所有已知来源均受信任时免除操作确认。通配符包含主域及其子域，并严格区分协议和端口；`*.example.com` 默认使用 HTTPS。',
     trustedOriginInput: '要永久信任的域名（如 https://example.com 或 https://*.example.com）',

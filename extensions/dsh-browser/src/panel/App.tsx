@@ -799,6 +799,8 @@ export function App(): React.JSX.Element {
         autoFollowTab: raw?.autoFollowTab ?? false,
         screenshotEnhancement: raw?.screenshotEnhancement ?? false,
         automationSignalsProbe: raw?.automationSignalsProbe ?? false,
+        stealthMode: raw?.stealthMode ?? true,
+        writeObservationAttribute: raw?.writeObservationAttribute ?? false,
       })
     })
   }, [])
@@ -1878,6 +1880,36 @@ export function App(): React.JSX.Element {
               onChange={(event) => setSettings((current) => current === null
                 ? current
                 : { ...current, automationSignalsProbe: event.target.checked })}
+            />
+            <span className="setting-toggle-control" aria-hidden="true"><span /></span>
+          </label>
+          <label className="setting-toggle">
+            <span className="setting-toggle-copy">
+              <strong>{copy.settings.stealthMode}</strong>
+              <small>{copy.settings.stealthModeHelp}</small>
+            </span>
+            <input
+              className="setting-toggle-input"
+              type="checkbox"
+              checked={settings?.stealthMode ?? true}
+              onChange={(event) => setSettings((current) => current === null
+                ? current
+                : { ...current, stealthMode: event.target.checked })}
+            />
+            <span className="setting-toggle-control" aria-hidden="true"><span /></span>
+          </label>
+          <label className="setting-toggle">
+            <span className="setting-toggle-copy">
+              <strong>{copy.settings.writeObservationAttribute}</strong>
+              <small>{copy.settings.writeObservationAttributeHelp}</small>
+            </span>
+            <input
+              className="setting-toggle-input"
+              type="checkbox"
+              checked={settings?.writeObservationAttribute ?? false}
+              onChange={(event) => setSettings((current) => current === null
+                ? current
+                : { ...current, writeObservationAttribute: event.target.checked })}
             />
             <span className="setting-toggle-control" aria-hidden="true"><span /></span>
           </label>

@@ -30,6 +30,7 @@ import {
   SnapshotRegionError,
 } from './snapshot.ts'
 import { collectAutomationSignals, renderAutomationSignals } from './automation-signals.ts'
+import { getContentPolicy } from './policy.ts'
 
 /** A settled action result. */
 export interface ActionResult {
@@ -491,7 +492,7 @@ async function clickAction(args: Record<string, unknown>, ctx: ActionContext): P
   const el = target.element
   const label = describeTarget(target)
   if (!target.skipScroll) {
-    el.scrollIntoView({ block: 'center', behavior: 'instant' })
+    scrollTargetIntoView(el)
   }
   if (el instanceof HTMLAnchorElement) {
     const targetAttr = el.target.trim().toLowerCase()
@@ -551,7 +552,7 @@ async function clickAction(args: Record<string, unknown>, ctx: ActionContext): P
   if (el instanceof HTMLButtonElement && el.disabled) {
     throw new ActionError('action-failed', `Button ${label} is disabled.`)
   }
-  synthesizePointerClick(el as HTMLElement)
+  await synthesizePointerClick(el as HTMLElement)
   await waitForPageSettled(ACTION_SETTLE)
   return withPageDelta(`Clicked ${label}.`, ctx)
 }
@@ -562,14 +563,22 @@ async function clickAction(args: Record<string, unknown>, ctx: ActionContext): P
  * Many design-system pickers open on `pointerdown`/`mousedown`/`focus`, not
  * on the synthetic `HTMLElement.click()` event alone.
  */
-function synthesizePointerClick(target: HTMLElement): void {
+async function synthesizePointerClick(target: HTMLElement): Promise<void> {
+  if (getContentPolicy().pointerTrail) {
+    await dispatchPointerTrail(target)
+  }
   // Omit `view`: jsdom rejects `view: window` on MouseEvent/PointerEvent.
+  const rect = target.getBoundingClientRect()
+  const clientX = rect.left + Math.max(rect.width / 2, 0)
+  const clientY = rect.top + Math.max(rect.height / 2, 0)
   const downInit: MouseEventInit = {
     bubbles: true,
     cancelable: true,
     composed: true,
     button: 0,
     buttons: 1,
+    clientX,
+    clientY,
   }
   dispatchPointer(target, 'pointerdown', downInit)
   target.dispatchEvent(new MouseEvent('mousedown', downInit))
@@ -585,6 +594,67 @@ function synthesizePointerClick(target: HTMLElement): void {
   dispatchPointer(target, 'pointerup', upInit)
   target.dispatchEvent(new MouseEvent('mouseup', upInit))
   target.dispatchEvent(new MouseEvent('click', { ...upInit, detail: 1 }))
+}
+
+/** Scroll a target into view using the active content policy. */
+function scrollTargetIntoView(el: Element): void {
+  if (getContentPolicy().minimalScroll) {
+    if (isRoughlyInViewport(el)) return
+    el.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' })
+    return
+  }
+  el.scrollIntoView({ block: 'center', behavior: 'instant' })
+}
+
+function isRoughlyInViewport(el: Element): boolean {
+  const rect = el.getBoundingClientRect()
+  const vh = window.innerHeight || document.documentElement.clientHeight || 0
+  const vw = window.innerWidth || document.documentElement.clientWidth || 0
+  return rect.bottom > 0 && rect.right > 0 && rect.top < vh && rect.left < vw
+}
+
+/**
+ * Emit a few pointermove/mousemove frames toward the target center before a
+ * click. Frames are split across animation frames so they are not same-tick.
+ */
+async function dispatchPointerTrail(target: HTMLElement): Promise<void> {
+  const rect = target.getBoundingClientRect()
+  const endX = rect.left + Math.max(rect.width / 2, 0)
+  const endY = rect.top + Math.max(rect.height / 2, 0)
+  const startX = Math.max(0, endX - (24 + pseudoRandomOffset(endX, 32)))
+  const startY = Math.max(0, endY - (16 + pseudoRandomOffset(endY, 24)))
+  const steps = 3
+  for (let i = 1; i <= steps; i += 1) {
+    await nextAnimationFrame()
+    const t = i / steps
+    const clientX = startX + (endX - startX) * t
+    const clientY = startY + (endY - startY) * t
+    const init: MouseEventInit = {
+      bubbles: true,
+      cancelable: true,
+      composed: true,
+      clientX,
+      clientY,
+      buttons: 0,
+    }
+    dispatchPointer(target, 'pointermove', init)
+    target.dispatchEvent(new MouseEvent('mousemove', init))
+  }
+}
+
+function pseudoRandomOffset(seed: number, span: number): number {
+  const unit = Math.abs(Math.sin(seed * 12.9898)) % 1
+  return unit * span
+}
+
+function nextAnimationFrame(): Promise<void> {
+  return new Promise((resolve) => {
+    if (typeof requestAnimationFrame === 'function') {
+      requestAnimationFrame(() => { resolve() })
+      return
+    }
+    setTimeout(resolve, 0)
+  })
 }
 
 function dispatchPointer(target: HTMLElement, type: string, mouseInit: MouseEventInit): void {
@@ -711,7 +781,7 @@ async function typeAction(args: Record<string, unknown>, ctx: ActionContext): Pr
   const el = target.element
   const label = describeTarget(target)
   if (!target.skipScroll) {
-    el.scrollIntoView({ block: 'center', behavior: 'instant' })
+    scrollTargetIntoView(el)
   }
   if (isEditable(el)) {
     typeIntoContentEditable(el, text, replace)
@@ -740,7 +810,7 @@ async function focusAction(args: Record<string, unknown>, ctx: ActionContext): P
   if (!(el instanceof HTMLElement)) {
     throw new ActionError('action-failed', `Element ${describeTarget(target)} cannot receive focus.`)
   }
-  if (!target.skipScroll) el.scrollIntoView({ block: 'center', behavior: 'instant' })
+  if (!target.skipScroll) scrollTargetIntoView(el)
   el.focus()
   await waitForPageSettled(TYPE_SETTLE)
   return withPageDelta(`Focused ${describeTarget(target)}.`, ctx)

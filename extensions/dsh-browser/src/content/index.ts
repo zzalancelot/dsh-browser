@@ -13,6 +13,7 @@
 import { DEFAULT_SNAPSHOT_MAX_CHARS } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
 import { runAction, ActionError } from './actions.ts'
 import { ElementIds } from './ids.ts'
+import { setContentPolicy, type ContentPolicy } from './policy.ts'
 import { SelectionWatcher } from './selection.ts'
 import type { SnapshotBudget } from './snapshot.ts'
 
@@ -47,6 +48,14 @@ function onMessage(message: unknown, _sender: chrome.runtime.MessageSender, send
     }
     return
   }
+  if (msg.type === 'DSH_CONTENT_POLICY') {
+    const incoming = (message as { policy?: Partial<ContentPolicy> }).policy
+    if (incoming !== undefined) {
+      const applied = setContentPolicy(incoming)
+      sendResponse({ ok: true, result: { text: `内容策略已更新: ${JSON.stringify(applied)}` } })
+    }
+    return
+  }
   if (msg.type === 'DSH_SELECTION_WATCH') {
     const command = message as { enabled?: unknown; epoch?: unknown; revision?: unknown }
     const epoch = typeof command.epoch === 'string' ? command.epoch : undefined
@@ -67,9 +76,11 @@ function onMessage(message: unknown, _sender: chrome.runtime.MessageSender, send
     args?: Record<string, unknown>
     budget?: Partial<SnapshotBudget>
     includePageDelta?: boolean
+    policy?: Partial<ContentPolicy>
   }
   const action = actionMsg.action ?? ''
   const args = actionMsg.args ?? {}
+  if (actionMsg.policy !== undefined) setContentPolicy(actionMsg.policy)
   const actionBudget = actionMsg.budget === undefined ? budget : { ...budget, ...actionMsg.budget }
   void runAction(action, args, {
     ids,

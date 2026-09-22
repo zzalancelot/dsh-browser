@@ -114,6 +114,16 @@ export interface Settings {
    * client-visible anti-automation signals. Off by default.
    */
   automationSignalsProbe: boolean
+  /**
+   * Reduce mechanical click/scroll fingerprints (pointer trail + minimal
+   * scroll). On by default.
+   */
+  stealthMode: boolean
+  /**
+   * Mirror inventory numbers onto `data-dsh-el` attributes. Off by default
+   * because the attribute is a durable page fingerprint.
+   */
+  writeObservationAttribute: boolean
 }
 
 const SETTINGS_DEFAULTS: Settings = {
@@ -128,6 +138,8 @@ const SETTINGS_DEFAULTS: Settings = {
   autoFollowTab: false,
   screenshotEnhancement: false,
   automationSignalsProbe: false,
+  stealthMode: true,
+  writeObservationAttribute: false,
 }
 
 /** Legacy default that used to be written as a "manual" override; treat as empty. */
@@ -352,6 +364,8 @@ function normalizeSettings(candidate: Settings): Settings {
     autoFollowTab: candidate.autoFollowTab === true,
     screenshotEnhancement: candidate.screenshotEnhancement === true,
     automationSignalsProbe: candidate.automationSignalsProbe === true,
+    stealthMode: candidate.stealthMode !== false,
+    writeObservationAttribute: candidate.writeObservationAttribute === true,
   }
 }
 
@@ -1179,6 +1193,11 @@ function routeToolCall(call: ToolCall): void {
         unrestrictedAccess,
         screenshotEnhancement: settings.screenshotEnhancement,
         automationSignalsProbe: settings.automationSignalsProbe,
+        contentPolicy: {
+          writeObservationAttribute: settings.writeObservationAttribute,
+          pointerTrail: settings.stealthMode,
+          minimalScroll: settings.stealthMode,
+        },
         ...(controlledTabId === undefined ? {} : { controlledTabId }),
         followTab: (tab, options) => followModelSelectedTab(tab, call.sessionId, options),
         commitAction,
@@ -1216,6 +1235,11 @@ function routeToolCall(call: ToolCall): void {
             unrestrictedAccess,
             screenshotEnhancement: settings.screenshotEnhancement,
             automationSignalsProbe: settings.automationSignalsProbe,
+            contentPolicy: {
+              writeObservationAttribute: settings.writeObservationAttribute,
+              pointerTrail: settings.stealthMode,
+              minimalScroll: settings.stealthMode,
+            },
             commitAction,
             rollbackActionCommit,
           },

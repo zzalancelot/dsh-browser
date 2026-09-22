@@ -72,6 +72,7 @@ The paired Playwright / extension duration ratio was **1.24** (95% CI **1.16–1
 - `browser_press` synthesizes keyboard events on the focused element; it does not move focus via Tab, cannot drive IME composition, and does not synthesize form submit while a floating picker/dropdown is open (persistent in-flow panels do not count). Trusted-event-only flows need CDP / `chrome.debugger` (out of scope).
 - Nested heuristic controls expose `depth`; when a shallow click does nothing, retry a higher-depth sibling on the same chain.
 - Visually hidden inputs are listed (values always masked) so agents can address them; assigning them with `browser_type` will not open panels or update React/Vue picker state — click overlay cells instead.
+- The extension operates pages with synthetic `dispatchEvent` input, so `event.isTrusted` is always `false`. That cannot be forged from a content script; only CDP / `chrome.debugger` trusted input can change it (new permissions + a browser “debugging” banner). Stealth input settings reduce mechanical fingerprints (no durable `data-dsh-el` by default; optional pointer trail / minimal scroll) but do **not** promise evasion of site anti-automation.
 
 ## Repository layout
 

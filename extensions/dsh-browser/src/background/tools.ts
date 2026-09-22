@@ -131,6 +131,8 @@ export interface TabManagementContext {
    * Settings → Automation signals probe is enabled.
    */
   automationSignalsProbe?: boolean
+  /** Content-script fingerprint / input policy pushed with each action. */
+  contentPolicy?: ContentPolicyWire
   /** Controlled tab for the calling session, when one still exists. */
   controlledTabId?: number
   /** Rebind subsequent tools to one existing tab; optionally activate it. */
@@ -139,6 +141,13 @@ export interface TabManagementContext {
   commitAction?: () => void
   /** Restore withdrawability when a content-script action was not delivered. */
   rollbackActionCommit?: () => void
+}
+
+/** Wire shape for content-script observation / stealth flags. */
+export interface ContentPolicyWire {
+  writeObservationAttribute?: boolean
+  pointerTrail?: boolean
+  minimalScroll?: boolean
 }
 
 function isToolAnswer(value: unknown): value is ToolAnswer {
@@ -174,6 +183,7 @@ async function sendAction(
   frame: TabFrame,
   budget?: ContentBudget,
   includePageDelta: boolean = false,
+  policy?: ContentPolicyWire,
 ): Promise<unknown> {
   return chrome.tabs.sendMessage(tabId, {
     type: 'DSH_ACTION',
@@ -181,6 +191,7 @@ async function sendAction(
     args: withoutFrame(call.args),
     ...budget === undefined ? {} : { budget },
     ...includePageDelta ? { includePageDelta: true } : {},
+    ...policy === undefined ? {} : { policy },
   }, frame.documentId === undefined ? { frameId: frame.frameId } : { documentId: frame.documentId })
 }
 
@@ -477,6 +488,7 @@ async function snapshotAllFrames(
   frames: TabFrame[],
   call: ToolCall,
   budget: ContentBudget,
+  policy?: ContentPolicyWire,
 ): Promise<ToolAnswer> {
   const budgets = allocateFrameBudgets(frames, budget)
   const previous = snapshotDocumentsByTab.get(tabId) ?? new Map<number, string>()
@@ -488,7 +500,7 @@ async function snapshotAllFrames(
       ...call,
       args: deltaRequested && sameDocument ? call.args : { ...call.args, delta: false },
     }
-    const response = await sendAction(tabId, frameCall, frame, budgets.get(frame.frameId))
+    const response = await sendAction(tabId, frameCall, frame, budgets.get(frame.frameId), false, policy)
     return { frame, response }
   }))
 
@@ -570,10 +582,11 @@ async function dispatchOnce(
   includeActionDelta: boolean = false,
   commitAction?: () => void,
   rollbackActionCommit?: () => void,
+  policy?: ContentPolicyWire,
 ): Promise<ToolAnswer> {
   if (isCancelled(call, signal)) return cancelled()
   if (targetStillAllowed?.() === false) return targetChanged()
-  if (call.name === 'browser_snapshot') return snapshotAllFrames(tabId, frames, call, budget)
+  if (call.name === 'browser_snapshot') return snapshotAllFrames(tabId, frames, call, budget, policy)
 
   const frameId = requestedFrame(call.args)
   if (frameId < 0) return { ok: false, error: { code: 'action-failed', message: 'frame must be a non-negative integer.' } }
@@ -600,6 +613,7 @@ async function dispatchOnce(
       frame,
       requestPageDelta ? budget : undefined,
       requestPageDelta,
+      policy,
     )
   } catch (error: unknown) {
     if (stateChanging && contentScriptReceiverMissing(error)) rollbackActionCommit?.()
@@ -935,6 +949,7 @@ export async function dispatchToolCall(
       tabManagement.unrestrictedAccess || sharePageContent === 'auto',
       tabManagement.commitAction,
       tabManagement.rollbackActionCommit,
+      tabManagement.contentPolicy,
     )
   } catch (error: unknown) {
     if (isCancelled(call, signal)) return cancelled()
@@ -976,6 +991,7 @@ export async function dispatchToolCall(
         tabManagement.unrestrictedAccess || sharePageContent === 'auto',
         tabManagement.commitAction,
         tabManagement.rollbackActionCommit,
+        tabManagement.contentPolicy,
       )
     } catch {
       return unavailable('The content script did not answer after it was loaded. Call browser_snapshot again before retrying.')
