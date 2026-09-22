@@ -575,7 +575,7 @@ function defineTools(
 
   const openTab = (): ToolDefinition => defineTool({
     name: 'browser_open_tab',
-    description: 'Open an HTTP(S) URL in a new controlled tab (active by default; active:false keeps current tab). Prefer list_tabs+follow_tab if already open.',
+    description: 'Open an HTTP(S) URL in a new tab and make it the controlled target. Activates the tab by default; set active:false to keep the current visible tab in front. Prefer list_tabs+follow_tab if already open.',
     parameters: {
       url: { type: 'string', required: true, description: 'Complete http or https URL.' },
       active: {
