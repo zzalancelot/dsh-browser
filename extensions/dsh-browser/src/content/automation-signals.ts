@@ -31,7 +31,9 @@ interface VendorPattern {
 }
 
 const VENDOR_PATTERNS: VendorPattern[] = [
-  { id: 'bytedance-turing', label: 'ByteDance Turing / secsdk', hosts: ['verify.snssdk.com', 'secsdk-captcha', 'captcha.bytedance'], strength: 'strong' },
+  { id: 'bytedance-turing', label: 'ByteDance Turing / secsdk', hosts: ['verify.snssdk.com', 'secsdk-captcha', 'captcha.bytedance', 'sec_sdk_build'], strength: 'strong' },
+  { id: 'bytedance-rmc', label: 'ByteDance RMC NoCaptcha / verify center', hosts: ['rmc-nocaptcha', 'rc-verifycenter', 'rmc.bytedance.com', 'verify.zijieapi.com', 'yhgfb-cn-static.com/obj/rc-verifycenter'], strength: 'strong' },
+  { id: 'bytedance-sec-cdn', label: 'ByteDance sec captcha CDN', hosts: ['bytescm.com/obj/static/sec', 'lf-cdn-tos.bytescm.com/obj/static/sec'], strength: 'strong' },
   { id: 'arkose', label: 'Arkose Labs', hosts: ['arkoselabs.com', 'funcaptcha.com'], strength: 'strong' },
   { id: 'castle', label: 'Castle', hosts: ['castle.io', 'crbcos.com'], strength: 'strong' },
   { id: 'socure', label: 'Socure Device Risk', hosts: ['socure.io', 'sdk.dv.socure'], strength: 'strong' },
@@ -54,6 +56,9 @@ const COOKIE_PATTERNS: Array<{ id: string; name: RegExp; label: string; strength
   { id: 'boss-stoken', name: /^__zp_stoken__$/i, label: 'BOSS __zp_stoken__ challenge cookie', strength: 'strong' },
   { id: 'boss-seed', name: /^__zp_s(seed|name|ts)__$/i, label: 'BOSS security-js seed cookie', strength: 'strong' },
   { id: 'bytedance-fp', name: /^s_v_web_id$/i, label: 'ByteDance s_v_web_id device id cookie', strength: 'weak' },
+  { id: 'bytedance-ac-nonce', name: /^__ac_nonce$/i, label: 'ByteDance / Douyin __ac_nonce JS-challenge seed cookie', strength: 'strong' },
+  { id: 'bytedance-ac-signature', name: /^__ac_signature$/i, label: 'ByteDance / Douyin __ac_signature JS-challenge cookie', strength: 'strong' },
+  { id: 'bytedance-ac-referer', name: /^__ac_referer$/i, label: 'ByteDance / Douyin __ac_referer challenge cookie', strength: 'weak' },
   { id: 'cf-clearance', name: /^cf_clearance$/i, label: 'Cloudflare cf_clearance cookie', strength: 'strong' },
   { id: 'xhs-websectiga', name: /^websectiga$/i, label: 'Xiaohongshu websectiga device/security cookie', strength: 'strong' },
   { id: 'xhs-sec-poison', name: /^sec_poison_id$/i, label: 'Xiaohongshu sec_poison_id cookie', strength: 'strong' },
@@ -69,11 +74,15 @@ const GLOBAL_PATTERNS: Array<{ id: string; key: string; label: string; strength:
   { id: 'hcaptcha-global', key: 'hcaptcha', label: 'window.hcaptcha', strength: 'strong' },
   { id: 'xhs-fingerprint', key: 'xhsFingerprint', label: 'window.xhsFingerprint device fingerprint API', strength: 'strong' },
   { id: 'xhs-fecaptcha', key: 'FeCaptcha', label: 'window.FeCaptcha (Xiaohongshu captcha UI)', strength: 'strong' },
+  { id: 'bytedance-acrawler', key: 'byted_acrawler', label: 'window.byted_acrawler (Douyin / ByteDance page JS challenge)', strength: 'strong' },
+  { id: 'bytedance-ttgcaptcha', key: 'TTGCaptcha', label: 'window.TTGCaptcha (ByteDance / Douyin captcha loader)', strength: 'strong' },
 ]
 
 const CHALLENGE_URL = /security-check|verify-slider|\/captcha|challenge|cdn-cgi\/challenge|cf-browser-verification|web-login\/captcha|redcaptcha|error_code=30003/i
 
-const CHALLENGE_ATTR = /captcha|verify-slider|slide-verify|arkose|geetest|recaptcha|hcaptcha|turnstile|secsdk|redcaptcha|fecaptcha|xsec/i
+const CHALLENGE_ATTR = /captcha|verify-slider|slide-verify|arkose|geetest|recaptcha|hcaptcha|turnstile|secsdk|redcaptcha|fecaptcha|xsec|ttgcaptcha|rmc-nocaptcha|nocaptcha|acrawler/i
+
+const CHALLENGE_TITLE = /验证码中间页|安全验证|security\s*check|captcha/i
 
 const CONTENT_TOKEN_HREF = /[?&]xsec_token=/i
 
@@ -149,6 +158,9 @@ export function collectAutomationSignals(
     })
   }
 
+  const titleHit = findChallengeTitle(doc)
+  if (titleHit !== undefined) add(titleHit)
+
   const challengeHit = findChallengeDomHint(doc)
   if (challengeHit !== undefined) add(challengeHit)
 
@@ -183,7 +195,7 @@ export function collectAutomationSignals(
     signals,
     notes: [
       'Heuristic client-side probe only; absence of signals does not mean the site has no server-side anti-automation.',
-      'Does not read response CSP headers, HttpOnly cookies (e.g. acw_tc), request-signing headers (e.g. X-s), or obfuscated bundle internals (e.g. isRiskWindow).',
+      'Does not read response CSP/reporting headers, HttpOnly cookies (e.g. acw_tc), request-signing headers (e.g. X-s), or encrypted VM / obfuscated bundle internals (e.g. _$jsvmprt, isRiskWindow).',
       'Do not treat this as a bypass capability check.',
     ],
   }
@@ -255,6 +267,21 @@ function findChallengeDomHint(doc: Document): AutomationSignal | undefined {
     }
   }
   return undefined
+}
+
+function findChallengeTitle(doc: Document): AutomationSignal | undefined {
+  try {
+    const title = doc.title?.trim() ?? ''
+    if (title === '' || !CHALLENGE_TITLE.test(title)) return undefined
+    return {
+      id: 'title:challenge',
+      category: 'challenge_ui',
+      strength: 'strong',
+      detail: `Document title looks like a challenge page: ${truncateUrl(title)}`,
+    }
+  } catch {
+    return undefined
+  }
 }
 
 /** Xiaohongshu-style content access tokens embedded in note/user links. */

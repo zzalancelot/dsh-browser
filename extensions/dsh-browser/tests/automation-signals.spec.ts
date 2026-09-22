@@ -11,8 +11,9 @@ function clearCookies(): void {
 
 afterEach(() => {
   document.body.innerHTML = ''
+  document.title = ''
   clearCookies()
-  for (const key of ['zpFingerPrint', 'xhsFingerprint', 'FeCaptcha'] as const) {
+  for (const key of ['zpFingerPrint', 'xhsFingerprint', 'FeCaptcha', 'byted_acrawler', 'TTGCaptcha'] as const) {
     try {
       delete (window as unknown as Record<string, unknown>)[key]
     } catch {
@@ -86,6 +87,29 @@ describe('collectAutomationSignals', () => {
       search: '?error_code=300031&verifyType=301',
     })
     expect(report.signals.some((s) => s.id === 'url:challenge')).toBe(true)
+    expect(report.strongest).toBe('strong')
+  })
+
+  it('detects Douyin / ByteDance acrawler challenge, RMC, and captcha intermediate page', () => {
+    document.title = '验证码中间页'
+    document.body.innerHTML = `
+      <script src="https://lf-cdn-tos.bytescm.com/obj/static/sec_sdk_build/3.5.2/captcha/index.js"></script>
+      <script src="https://lf-cdn-tos.bytescm.com/obj/static/secsdk-captcha/cn2/2.21.2/captcha.js"></script>
+      <iframe src="https://lf-rc1.yhgfb-cn-static.com/obj/rc-verifycenter/rmc-nocaptcha/1.0.0.52/index.html" title="RMC NoCaptcha"></iframe>
+    `
+    document.cookie = '__ac_nonce=06ab2319a003752d8de15; path=/'
+    document.cookie = '__ac_signature=sig; path=/'
+    Object.defineProperty(window, 'byted_acrawler', { value: { init() {}, sign() { return '' } }, configurable: true })
+    Object.defineProperty(window, 'TTGCaptcha', { value: { init() {}, render() {} }, configurable: true })
+
+    const report = collectAutomationSignals(document, window)
+    expect(report.signals.some((s) => s.id === 'title:challenge')).toBe(true)
+    expect(report.signals.some((s) => s.id === 'vendor:bytedance-turing')).toBe(true)
+    expect(report.signals.some((s) => s.id === 'vendor:bytedance-rmc' || s.id === 'vendor:bytedance-sec-cdn')).toBe(true)
+    expect(report.signals.some((s) => s.id === 'cookie:bytedance-ac-nonce:__ac_nonce')).toBe(true)
+    expect(report.signals.some((s) => s.id === 'cookie:bytedance-ac-signature:__ac_signature')).toBe(true)
+    expect(report.signals.some((s) => s.id === 'global:bytedance-acrawler')).toBe(true)
+    expect(report.signals.some((s) => s.id === 'global:bytedance-ttgcaptcha')).toBe(true)
     expect(report.strongest).toBe('strong')
   })
 
