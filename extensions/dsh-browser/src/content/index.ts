@@ -13,6 +13,7 @@
 import { DEFAULT_SNAPSHOT_MAX_CHARS } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
 import { runAction, ActionError } from './actions.ts'
 import { ElementIds } from './ids.ts'
+import { collectAutomationSignals } from './automation-signals.ts'
 import { setContentPolicy, type ContentPolicy } from './policy.ts'
 import { SelectionWatcher } from './selection.ts'
 import type { SnapshotBudget } from './snapshot.ts'
@@ -33,7 +34,12 @@ type ContentListener = typeof onMessage
 /** A tool-call result for the bridge. */
 export interface ToolResult {
   ok: boolean
-  result?: { text: string; pageContent?: string; navigationPending?: boolean }
+  result?: {
+    text?: string
+    pageContent?: string
+    navigationPending?: boolean
+    report?: ReturnType<typeof collectAutomationSignals>
+  }
   error?: { code: string; message: string }
 }
 
@@ -68,6 +74,10 @@ function onMessage(message: unknown, _sender: chrome.runtime.MessageSender, send
     // The panel dropped this frame's quote; let the same passage be re-reported.
     selectionWatcher.resetDedupe()
     sendResponse({ ok: true })
+    return
+  }
+  if (msg.type === 'DSH_AUTOMATION_SIGNALS') {
+    sendResponse({ ok: true, result: { report: collectAutomationSignals() } })
     return
   }
   if (msg.type !== 'DSH_ACTION') return

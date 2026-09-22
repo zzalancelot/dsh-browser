@@ -13,13 +13,40 @@ export interface AutomationSignal {
   detail: string
 }
 
+/** Heuristic surface-signal intensity for UI (1=green … 5=red). Not a verdict. */
+export type AutomationSignalLevel = 1 | 2 | 3 | 4 | 5
+
 /** Aggregate probe result for the current document. */
 export interface AutomationSignalsReport {
   url: string
   signalCount: number
   strongest: 'none' | 'weak' | 'strong'
+  /** 1–5 mapped from client-visible signals only. */
+  level: AutomationSignalLevel
   signals: AutomationSignal[]
   notes: string[]
+}
+
+/**
+ * Map matched signals onto a 1–5 reminder scale (green → red).
+ * This ranks how dense the observable surface signals are — not true risk.
+ */
+export function scoreAutomationLevel(
+  report: Pick<AutomationSignalsReport, 'signals' | 'strongest'>,
+): AutomationSignalLevel {
+  const strong = report.signals.filter((signal) => signal.strength === 'strong').length
+  const weak = report.signals.filter((signal) => signal.strength === 'weak').length
+  const hasChallengeUi = report.signals.some((signal) => (
+    signal.category === 'challenge_ui'
+    || signal.id.startsWith('url:challenge')
+    || signal.id.startsWith('title:challenge')
+  ))
+  const points = strong * 3 + weak + (hasChallengeUi ? 2 : 0)
+  if (points <= 0) return 1
+  if (points <= 2) return 2
+  if (points <= 5) return 3
+  if (points <= 8) return 4
+  return 5
 }
 
 interface VendorPattern {
@@ -187,11 +214,13 @@ export function collectAutomationSignals(
   const strongest = signals.some((s) => s.strength === 'strong')
     ? 'strong'
     : signals.length > 0 ? 'weak' : 'none'
+  const draft = { signals, strongest }
 
   return {
     url: href,
     signalCount: signals.length,
     strongest,
+    level: scoreAutomationLevel(draft),
     signals,
     notes: [
       'Heuristic client-side probe only; absence of signals does not mean the site has no server-side anti-automation.',
@@ -207,6 +236,7 @@ export function renderAutomationSignals(report: AutomationSignalsReport): string
     'Automation capability signals (heuristic; not a verdict)',
     `URL: ${report.url || '(unknown)'}`,
     `Strongest observed: ${report.strongest}`,
+    `Surface level: ${report.level}/5`,
     `Signal count: ${report.signalCount}`,
   ]
   if (report.signals.length === 0) {
