@@ -29,6 +29,7 @@ import {
   SnapshotInvalidSelectorError,
   SnapshotRegionError,
 } from './snapshot.ts'
+import { collectAutomationSignals, renderAutomationSignals } from './automation-signals.ts'
 
 /** A settled action result. */
 export interface ActionResult {
@@ -435,9 +436,16 @@ export async function runAction(action: string, args: Record<string, unknown>, c
       return getTextAction(args)
     case 'browser_wait':
       return waitAction(args, ctx)
+    case 'browser_automation_signals':
+      return automationSignalsAction()
     default:
       throw new ActionError('bad-args', `Unknown action: ${action}`)
   }
+}
+
+/** Read-only heuristic probe for client-visible anti-automation capability. */
+function automationSignalsAction(): ActionResult {
+  return { text: renderAutomationSignals(collectAutomationSignals()) }
 }
 
 function snapshotAction(args: Record<string, unknown>, ctx: ActionContext): ActionResult {

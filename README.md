@@ -62,6 +62,7 @@ The paired Playwright / extension duration ratio was **1.24** (95% CI **1.16–1
 | Close tab | `browser_close_tab` | Close a tab returned by `browser_list_tabs` |
 | Read region | `browser_get_text` | Lazy-loaded or partial page text |
 | Wait for stability | `browser_wait` | Page-load and render-settle detection |
+| Automation signals | `browser_automation_signals` | Opt-in heuristic client-visible anti-automation / captcha signals (Settings → Automation signals probe; not a verdict) |
 | Send images | `session.prompt` / `session.attachment` | Host-capability-gated image drafts, image-only prompts, and durable history previews |
 | Quote a selection | side panel composer | Text you highlight in the page appears in the composer and is sent with your next message as fenced, attributed page content |
 

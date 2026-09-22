@@ -432,6 +432,25 @@ describe('dispatchToolCall', () => {
     expect(chromeMock.captureVisibleTab).not.toHaveBeenCalled()
   })
 
+  it('blocks automation signals when the probe setting is disabled', async () => {
+    const chromeMock = mockChrome({ tab: { id: 7, url: 'https://example.com' } })
+
+    await expect(dispatchToolCall(
+      { id: 'signals-disabled', name: 'browser_automation_signals', args: {} },
+      'auto',
+      undefined,
+      undefined,
+      undefined,
+      { id: 7, url: 'https://example.com' },
+      undefined,
+      { unrestrictedAccess: false, automationSignalsProbe: false },
+    )).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'action-failed', message: expect.stringContaining('Automation signals probe is disabled') },
+    })
+    expect(chromeMock.sendMessage).not.toHaveBeenCalled()
+  })
+
   it('blocks screenshots when page content sharing is off', async () => {
     const chromeMock = mockChrome({ tab: { id: 7, url: 'https://example.com' } })
 
@@ -681,6 +700,29 @@ describe('dispatchToolCall', () => {
     expect(text).toContain('page text')
     expect(text).toContain('UNTRUSTED_PAGE_CONTENT')
     expect(text.length).toBeLessThanOrEqual(1_000)
+  })
+
+  it('wraps browser_automation_signals output in the same untrusted-content boundary', async () => {
+    const call: ToolCall = { id: 'tool-signals', name: 'browser_automation_signals', args: {} }
+    mockChrome({
+      tab: { id: 24, url: 'https://app.example/' },
+      responses: [{ ok: true, result: { text: 'Automation capability signals\nStrongest observed: none' } }],
+    })
+
+    const answer = await dispatchToolCall(
+      call,
+      'auto',
+      { maxItems: 10, maxChars: 1_000 },
+      undefined,
+      undefined,
+      undefined,
+      undefined,
+      { unrestrictedAccess: false, automationSignalsProbe: true },
+    )
+
+    const text = (answer.result as { text: string }).text
+    expect(text).toContain('Strongest observed: none')
+    expect(text).toContain('UNTRUSTED_PAGE_CONTENT')
   })
 
   it('returns the explicit user denial before reading', async () => {

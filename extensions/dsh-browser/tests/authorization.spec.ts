@@ -15,6 +15,16 @@ function call(name: string, args: Record<string, unknown> = {}): ToolCall {
 }
 
 describe('approvalPromptForCall', () => {
+  it('asks before reading automation signals like other page reads', () => {
+    expect(approvalPromptForCall(call('browser_automation_signals'), 'ask', FRAMES, 'zh')).toMatchObject({
+      kind: 'read',
+      action: 'browser_automation_signals',
+      summary: '扫描当前页面是否存在客户端可见的反自动化信号',
+      canTrust: false,
+    })
+    expect(approvalPromptForCall(call('browser_automation_signals'), 'auto', FRAMES, 'zh')).toBeUndefined()
+  })
+
   it('asks before reading and names every effective frame origin', () => {
     expect(approvalPromptForCall(call('browser_snapshot'), 'ask', FRAMES, 'zh')).toMatchObject({
       kind: 'read',

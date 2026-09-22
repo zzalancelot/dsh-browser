@@ -85,6 +85,8 @@ export interface PanelCopy {
     autoFollowTabHelp: string
     screenshotEnhancement: string
     screenshotEnhancementHelp: string
+    automationSignalsProbe: string
+    automationSignalsProbeHelp: string
     trustedOrigins: string
     trustedOriginsHelp: string
     trustedOriginInput: string
@@ -262,6 +264,7 @@ const EN: PanelCopy = {
       browser_reload: 'Reload page',
       browser_get_text: 'Extract text',
       browser_wait: 'Wait for page',
+      browser_automation_signals: 'Scan automation signals',
     },
     overflow: (shown, total) => `${shown.join(' → ')} → ${total - shown.length} more`,
   },
@@ -323,6 +326,8 @@ const EN: PanelCopy = {
     autoFollowTabHelp: 'When you switch tabs, the assistant follows the page you are viewing without asking for a handoff',
     screenshotEnhancement: 'Screenshot enhancement',
     screenshotEnhancementHelp: 'Allow the assistant to capture the controlled tab when text snapshot cannot describe the page (canvas, captcha, graphics). Off by default.',
+    automationSignalsProbe: 'Automation signals probe',
+    automationSignalsProbeHelp: 'Allow the assistant to scan the controlled page for client-visible anti-automation / captcha signals. Heuristic only; off by default.',
     trustedOrigins: 'Always-allowed domains',
     trustedOriginsHelp: 'The approval dialog can trust a domain for the current side-panel session only. Domains added here permanently skip action confirmation when every known origin is trusted. Wildcards include the base domain and subdomains, and stay scoped to their scheme and port; `*.example.com` defaults to HTTPS.',
     trustedOriginInput: 'Domain to always trust (e.g. https://example.com or https://*.example.com)',
@@ -500,6 +505,7 @@ const ZH: PanelCopy = {
       browser_reload: '刷新页面',
       browser_get_text: '提取文字',
       browser_wait: '等待页面',
+      browser_automation_signals: '扫描自动化信号',
     },
     overflow: (shown, total) => `${shown.join(' → ')} 等${total}个工具`,
   },
@@ -561,6 +567,8 @@ const ZH: PanelCopy = {
     autoFollowTabHelp: '切换标签页时，助手自动跟随你正在查看的页面，不再弹出页面交接确认',
     screenshotEnhancement: '截图增强模式',
     screenshotEnhancementHelp: '开启后，当文本快照无法描述页面（canvas、验证码、图形等）时，助手可截取受控标签页作为视觉兜底。默认关闭。',
+    automationSignalsProbe: '自动化信号探针',
+    automationSignalsProbeHelp: '开启后，助手可扫描受控页面上客户端可见的反自动化/验证码信号（启发式，非结论）。默认关闭。',
     trustedOrigins: '永久免确认域名',
     trustedOriginsHelp: '审批框可只信任本次侧栏会话。这里添加的域名仅在所有已知来源均受信任时免除操作确认。通配符包含主域及其子域，并严格区分协议和端口；`*.example.com` 默认使用 HTTPS。',
     trustedOriginInput: '要永久信任的域名（如 https://example.com 或 https://*.example.com）',

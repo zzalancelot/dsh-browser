@@ -159,6 +159,7 @@ export const BROWSER_TOOL_NAMES = [
   'browser_reload',
   'browser_get_text',
   'browser_wait',
+  'browser_automation_signals',
 ] as const
 
 /**
@@ -682,6 +683,22 @@ function defineTools(
     },
   })
 
+  const automationSignals = (): ToolDefinition => defineTool({
+    name: 'browser_automation_signals',
+    description: `Heuristic anti-automation / captcha signal scan. Requires Automation signals probe in Settings. Matches only; not a guarantee. ${UNTRUSTED_CONTENT_WARNING}`,
+    parameters: {
+      frame: FRAME_PARAMETER,
+    },
+    timeoutMs: options.toolTimeoutMs,
+    output: TEXT_OUTPUT,
+    execute: (args, exec) => {
+      const a = args as { frame?: number }
+      return call(exec, 'browser_automation_signals', {
+        ...a.frame !== undefined ? { frame: a.frame } : {},
+      })
+    },
+  })
+
   return [
     snapshot(),
     screenshot(),
@@ -701,5 +718,6 @@ function defineTools(
     simple('browser_reload', 'Reload the current page.'),
     getText(),
     wait(),
+    automationSignals(),
   ]
 }

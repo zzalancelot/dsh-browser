@@ -5,7 +5,12 @@ import type { TabFrame } from './frames.ts'
 import type { ApprovalPrompt } from '../security/approval.ts'
 import { getUiLocale, type UiLocale } from '../i18n.ts'
 
-const PAGE_READS = new Set(['browser_snapshot', 'browser_get_text', 'browser_screenshot'])
+const PAGE_READS = new Set([
+  'browser_snapshot',
+  'browser_get_text',
+  'browser_screenshot',
+  'browser_automation_signals',
+])
 const STATE_CHANGING_ACTIONS = new Set([
   'browser_click',
   'browser_type',
@@ -38,7 +43,13 @@ export function approvalPromptForCall(
         ? localized(locale, 'Read the current page and accessible iframes', '读取当前页面及可访问 iframe')
         : call.name === 'browser_screenshot'
           ? localized(locale, 'Capture a screenshot of the current page', '截取当前页面')
-          : localized(locale, 'Read text from the specified area of the current page', '读取当前页面的指定文本区域'),
+          : call.name === 'browser_automation_signals'
+            ? localized(
+              locale,
+              'Scan the current page for client-visible anti-automation signals',
+              '扫描当前页面是否存在客户端可见的反自动化信号',
+            )
+            : localized(locale, 'Read text from the specified area of the current page', '读取当前页面的指定文本区域'),
       origins: uniqueOrigins(targetFrames, frames),
       canTrust: false,
     }

@@ -798,6 +798,7 @@ export function App(): React.JSX.Element {
         autoResumeSession: raw?.autoResumeSession ?? true,
         autoFollowTab: raw?.autoFollowTab ?? false,
         screenshotEnhancement: raw?.screenshotEnhancement ?? false,
+        automationSignalsProbe: raw?.automationSignalsProbe ?? false,
       })
     })
   }, [])
@@ -1862,6 +1863,21 @@ export function App(): React.JSX.Element {
               onChange={(event) => setSettings((current) => current === null
                 ? current
                 : { ...current, screenshotEnhancement: event.target.checked })}
+            />
+            <span className="setting-toggle-control" aria-hidden="true"><span /></span>
+          </label>
+          <label className="setting-toggle">
+            <span className="setting-toggle-copy">
+              <strong>{copy.settings.automationSignalsProbe}</strong>
+              <small>{copy.settings.automationSignalsProbeHelp}</small>
+            </span>
+            <input
+              className="setting-toggle-input"
+              type="checkbox"
+              checked={settings?.automationSignalsProbe ?? false}
+              onChange={(event) => setSettings((current) => current === null
+                ? current
+                : { ...current, automationSignalsProbe: event.target.checked })}
             />
             <span className="setting-toggle-control" aria-hidden="true"><span /></span>
           </label>

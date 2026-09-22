@@ -22,6 +22,7 @@ The **browser-operation end** of dsh: the model reads and operates the browser p
 | Close tab | `browser_close_tab` | Close a listed tab |
 | Read region | `browser_get_text` | Lazy-loaded content / partial text |
 | Wait | `browser_wait` | Page load and render-settle detection |
+| Automation signals | `browser_automation_signals` | Opt-in heuristic client-visible anti-automation / captcha signals (Settings → Automation signals probe; not a verdict) |
 | Chat with images | `session.prompt` / `session.attachment` | Host-gated image selection, image-only sends, and durable history previews |
 | Quote what you highlight | side panel composer | The text you select in the page becomes a quote in the composer and rides along with your next message |
 

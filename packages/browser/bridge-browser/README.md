@@ -72,6 +72,7 @@ Each `respond` carries a globally unique transport id as well as the host intera
 | `browser_click` / `browser_type` / `browser_press` | Operate inventory items by stable index. |
 | `browser_scroll` / `browser_navigate` / `browser_open_tab` / `browser_back` / `browser_forward` / `browser_reload` | Page movement. |
 | `browser_get_text` / `browser_wait` | Read regions / settle detection. |
+| `browser_automation_signals` | Opt-in heuristic client-visible anti-automation / captcha signals (Settings → Automation signals probe; not a verdict). |
 
 ## Model Experience
 

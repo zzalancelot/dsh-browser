@@ -126,6 +126,11 @@ export interface TabManagementContext {
    * → Screenshot enhancement is enabled.
    */
   screenshotEnhancement?: boolean
+  /**
+   * Allow `browser_automation_signals`. Defaults to false (fail closed) unless
+   * Settings → Automation signals probe is enabled.
+   */
+  automationSignalsProbe?: boolean
   /** Controlled tab for the calling session, when one still exists. */
   controlledTabId?: number
   /** Rebind subsequent tools to one existing tab; optionally activate it. */
@@ -630,7 +635,7 @@ async function dispatchOnce(
   } else {
     navigationWait?.cancel()
   }
-  if (call.name === 'browser_get_text') {
+  if (call.name === 'browser_get_text' || call.name === 'browser_automation_signals') {
     return { ok: true, result: { text: wrapUntrustedContent(text, budget.maxChars) } }
   }
   const pageContent = requestPageDelta ? answerPageContent(response) : undefined
@@ -851,12 +856,23 @@ export async function dispatchToolCall(
       },
     }
   }
+  // Automation signals probe is opt-in; keep the tool registered but fail closed.
+  if (call.name === 'browser_automation_signals' && tabManagement.automationSignalsProbe !== true) {
+    return {
+      ok: false,
+      error: {
+        code: 'action-failed',
+        message: 'Automation signals probe is disabled in Settings. Enable Automation signals probe to allow this scan.',
+      },
+    }
+  }
   // Privacy boundary: with sharing off, no page content may leave the page.
   if (!tabManagement.unrestrictedAccess
     && sharePageContent === 'off'
     && (call.name === 'browser_snapshot'
       || call.name === 'browser_get_text'
-      || call.name === 'browser_screenshot')) {
+      || call.name === 'browser_screenshot'
+      || call.name === 'browser_automation_signals')) {
     return { ok: false, error: { code: 'action-failed', message: 'Page content sharing is disabled in Settings > Page content sharing.' } }
   }
   const tab = targetTab ?? (await chrome.tabs.query({ active: true, lastFocusedWindow: true }))[0]

@@ -109,6 +109,11 @@ export interface Settings {
    * describe the page. Off by default.
    */
   screenshotEnhancement: boolean
+  /**
+   * Allow `browser_automation_signals` to scan the controlled page for
+   * client-visible anti-automation signals. Off by default.
+   */
+  automationSignalsProbe: boolean
 }
 
 const SETTINGS_DEFAULTS: Settings = {
@@ -122,6 +127,7 @@ const SETTINGS_DEFAULTS: Settings = {
   autoResumeSession: true,
   autoFollowTab: false,
   screenshotEnhancement: false,
+  automationSignalsProbe: false,
 }
 
 /** Legacy default that used to be written as a "manual" override; treat as empty. */
@@ -345,6 +351,7 @@ function normalizeSettings(candidate: Settings): Settings {
     autoResumeSession: candidate.autoResumeSession !== false,
     autoFollowTab: candidate.autoFollowTab === true,
     screenshotEnhancement: candidate.screenshotEnhancement === true,
+    automationSignalsProbe: candidate.automationSignalsProbe === true,
   }
 }
 
@@ -1171,6 +1178,7 @@ function routeToolCall(call: ToolCall): void {
       {
         unrestrictedAccess,
         screenshotEnhancement: settings.screenshotEnhancement,
+        automationSignalsProbe: settings.automationSignalsProbe,
         ...(controlledTabId === undefined ? {} : { controlledTabId }),
         followTab: (tab, options) => followModelSelectedTab(tab, call.sessionId, options),
         commitAction,
@@ -1207,6 +1215,7 @@ function routeToolCall(call: ToolCall): void {
           {
             unrestrictedAccess,
             screenshotEnhancement: settings.screenshotEnhancement,
+            automationSignalsProbe: settings.automationSignalsProbe,
             commitAction,
             rollbackActionCommit,
           },

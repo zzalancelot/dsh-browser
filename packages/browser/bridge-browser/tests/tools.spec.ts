@@ -150,6 +150,11 @@ describe('registerBrowserTools', () => {
     expect(requestTool).toHaveBeenLastCalledWith('browser_wait', {}, exec.signal, 1_000)
     await run('browser_wait', { frame: 4 })
     expect(requestTool).toHaveBeenLastCalledWith('browser_wait', { frame: 4 }, exec.signal, 1_000)
+
+    await run('browser_automation_signals', {})
+    expect(requestTool).toHaveBeenLastCalledWith('browser_automation_signals', {}, exec.signal, 1_000)
+    await run('browser_automation_signals', { frame: 4 })
+    expect(requestTool).toHaveBeenLastCalledWith('browser_automation_signals', { frame: 4 }, exec.signal, 1_000)
   })
 
   it('normalizes every DSH parameter map to JSON Schema before registration', () => {
@@ -207,7 +212,7 @@ describe('registerBrowserTools', () => {
     const { ctx, bridge, registered } = makeHarness()
     registerBrowserTools(ctx, bridge, { toolTimeoutMs: 5_000, snapshotMaxChars: 12_000, maxInteractiveItems: 60 })
     const byName = new Map(registered.map((entry) => [entry.name, entry.definition]))
-    for (const name of ['browser_click', 'browser_type', 'browser_focus', 'browser_upload', 'browser_press', 'browser_scroll', 'browser_get_text', 'browser_wait']) {
+    for (const name of ['browser_click', 'browser_type', 'browser_focus', 'browser_upload', 'browser_press', 'browser_scroll', 'browser_get_text', 'browser_wait', 'browser_automation_signals']) {
       const params = byName.get(name)!.parameters as { properties: { frame?: { type?: unknown } } }
       expect(params.properties.frame?.type).toBe('number')
     }

@@ -72,6 +72,7 @@ npx @deepseek-ai/dsh@0.1.5-rc.2 web
 | `browser_click` / `browser_type` / `browser_press` | 按稳定编号操作清单元素。 |
 | `browser_scroll` / `browser_navigate` / `browser_open_tab` / `browser_back` / `browser_forward` / `browser_reload` | 页面移动。 |
 | `browser_get_text` / `browser_wait` | 读区域文本 / 稳定检测。 |
+| `browser_automation_signals` | 可选：启发式扫描客户端可见的反自动化/验证码信号（设置 → 自动化信号探针；非结论）。 |
 
 ## 模型体验
 
