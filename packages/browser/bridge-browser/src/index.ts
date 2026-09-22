@@ -26,7 +26,7 @@ import type {} from '@deepseek-ai/dsh-tools'
 import type {} from '@deepseek-ai/dsh-session-persistence'
 import type { WebRoute, WebUpgradeRoute } from '@deepseek-ai/dsh-host-webserver'
 import { dshHomePath } from '@deepseek-ai/dsh-home-paths'
-import { BridgeServer } from './server.ts'
+import { BridgeServer, isLoopbackAddress } from './server.ts'
 import { BrowserContextInjector } from './browser-context.ts'
 import { registerBrowserTools } from './tools.ts'
 import {
@@ -237,6 +237,8 @@ function mountBridge(
   // (loopback connections skip the token); non-loopback deployments keep
   // requiring the token on the WS itself. Prefer the request Host so
   // `--host 0.0.0.0` remotes are not told to dial 127.0.0.1 on their own machine.
+  // The bearer token is included only for loopback callers so the host settings
+  // UI can offer a one-click copy without exposing the secret on the LAN.
   const configRoute: WebRoute = {
     kind: 'exact',
     path: BRIDGE_CONFIG_PATH,
@@ -250,8 +252,12 @@ function mountBridge(
         fallbackPort: ctx.webServer.port,
         secure,
       })
+      const body: { wsUrl: string; token?: string } = { wsUrl }
+      if (isLoopbackAddress(req.socket.remoteAddress)) {
+        body.token = tokenRes.token
+      }
       res.writeHead(200, { 'content-type': 'application/json' })
-      res.end(JSON.stringify({ wsUrl }))
+      res.end(JSON.stringify(body))
     },
   }
   ctx.effect(() => ctx.webServer.register(configRoute), 'bridge-browser: /ext/bridge-config route')

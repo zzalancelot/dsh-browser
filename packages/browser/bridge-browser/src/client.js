@@ -1,8 +1,9 @@
 /**
  * Browser half of `@yuxianglin/dsh-bridge-browser`.
  *
- * When the host plugin is active, this client registers a General-settings row
- * that shows the pasteable bridge WebSocket URL for the Chrome extension.
+ * When the host plugin is active, this client registers General-settings rows
+ * that show the pasteable bridge WebSocket URL and (on the host) the bearer
+ * token for remote Chrome / Firefox extension clients.
  */
 window.__ModuleLoader__.load({
   id: '@yuxianglin/dsh-bridge-browser',
@@ -24,6 +25,12 @@ window.__ModuleLoader__.load({
         'bridgeAddress.copied': '已复制',
         'bridgeAddress.loading': '正在读取…',
         'bridgeAddress.unavailable': '暂时无法读取桥地址',
+        'bridgeToken.title': '浏览器桥 Token',
+        'bridgeToken.help': '局域网 / Firefox 扩展需要填写；本机回环一般可留空。复制后粘贴到扩展「Token」设置。',
+        'bridgeToken.copy': '复制',
+        'bridgeToken.copied': '已复制',
+        'bridgeToken.loading': '正在读取…',
+        'bridgeToken.unavailable': '仅本机可读取 Token（或暂时不可用）',
       },
       en: {
         'bridgeAddress.title': 'Browser bridge address',
@@ -32,6 +39,12 @@ window.__ModuleLoader__.load({
         'bridgeAddress.copied': 'Copied',
         'bridgeAddress.loading': 'Loading…',
         'bridgeAddress.unavailable': 'Bridge address unavailable',
+        'bridgeToken.title': 'Browser bridge token',
+        'bridgeToken.help': 'Required for LAN / Firefox clients. Loopback usually needs none. Copy into the extension Token setting.',
+        'bridgeToken.copy': 'Copy',
+        'bridgeToken.copied': 'Copied',
+        'bridgeToken.loading': 'Loading…',
+        'bridgeToken.unavailable': 'Token is only available on the host (or temporarily unavailable)',
       },
     }
 
@@ -42,22 +55,23 @@ window.__ModuleLoader__.load({
       return `${wsProtocol}//${host}${BRIDGE_PATH}`
     }
 
-    async function resolveBridgeWsUrl(location) {
-      const fallback = bridgeWsUrlFromLocation(location)
+    async function resolveBridgeConfig(location) {
+      const fallbackUrl = bridgeWsUrlFromLocation(location)
       try {
         const response = await fetch(`${location.origin}${BRIDGE_CONFIG_PATH}`, {
           signal: AbortSignal.timeout(1_500),
         })
-        if (!response.ok) return fallback
+        if (!response.ok) return { wsUrl: fallbackUrl }
         const body = await response.json()
-        if (typeof body?.wsUrl === 'string'
-          && (body.wsUrl.startsWith('ws://') || body.wsUrl.startsWith('wss://'))) {
-          return body.wsUrl
-        }
+        const wsUrl = typeof body?.wsUrl === 'string'
+          && (body.wsUrl.startsWith('ws://') || body.wsUrl.startsWith('wss://'))
+          ? body.wsUrl
+          : fallbackUrl
+        const token = typeof body?.token === 'string' && body.token !== '' ? body.token : undefined
+        return { wsUrl, token }
       } catch {
-        // Fall through to the reconstructed URL.
+        return { wsUrl: fallbackUrl }
       }
-      return fallback
     }
 
     function installStyle() {
@@ -82,16 +96,43 @@ window.__ModuleLoader__.load({
       return () => style.remove()
     }
 
+    function useCopiedFlag() {
+      const [copied, setCopied] = React.useState(false)
+      React.useEffect(() => {
+        if (!copied) return undefined
+        const timer = window.setTimeout(() => setCopied(false), 1_500)
+        return () => window.clearTimeout(timer)
+      }, [copied])
+      return [copied, setCopied]
+    }
+
+    async function copyText(text, valueSelector) {
+      try {
+        await navigator.clipboard.writeText(text)
+        return true
+      } catch {
+        const selection = window.getSelection()
+        const node = document.querySelector(valueSelector)
+        if (selection !== null && node instanceof HTMLElement) {
+          const range = document.createRange()
+          range.selectNodeContents(node)
+          selection.removeAllRanges()
+          selection.addRange(range)
+        }
+        return false
+      }
+    }
+
     function BridgeAddressRow({ t }) {
       const [address, setAddress] = React.useState('')
       const [status, setStatus] = React.useState('loading')
-      const [copied, setCopied] = React.useState(false)
+      const [copied, setCopied] = useCopiedFlag()
 
       React.useEffect(() => {
         let cancelled = false
-        void resolveBridgeWsUrl(window.location).then((url) => {
+        void resolveBridgeConfig(window.location).then((config) => {
           if (cancelled) return
-          setAddress(url)
+          setAddress(config.wsUrl)
           setStatus('ready')
         }).catch(() => {
           if (cancelled) return
@@ -100,28 +141,11 @@ window.__ModuleLoader__.load({
         return () => { cancelled = true }
       }, [])
 
-      React.useEffect(() => {
-        if (!copied) return undefined
-        const timer = window.setTimeout(() => setCopied(false), 1_500)
-        return () => window.clearTimeout(timer)
-      }, [copied])
-
       const onCopy = React.useCallback(async () => {
         if (address === '') return
-        try {
-          await navigator.clipboard.writeText(address)
-          setCopied(true)
-        } catch {
-          const selection = window.getSelection()
-          const node = document.querySelector('.dshBridgeAddressValue')
-          if (selection !== null && node instanceof HTMLElement) {
-            const range = document.createRange()
-            range.selectNodeContents(node)
-            selection.removeAllRanges()
-            selection.addRange(range)
-          }
-        }
-      }, [address])
+        const ok = await copyText(address, '.dshBridgeAddressValue[data-kind="address"]')
+        if (ok) setCopied(true)
+      }, [address, setCopied])
 
       const value = status === 'loading'
         ? t('bridgeAddress.loading')
@@ -141,6 +165,7 @@ window.__ModuleLoader__.load({
             'code',
             {
               className: 'dshBridgeAddressValue',
+              'data-kind': 'address',
               title: address || undefined,
             },
             value,
@@ -159,6 +184,71 @@ window.__ModuleLoader__.load({
       )
     }
 
+    function BridgeTokenRow({ t }) {
+      const [token, setToken] = React.useState('')
+      const [status, setStatus] = React.useState('loading')
+      const [copied, setCopied] = useCopiedFlag()
+
+      React.useEffect(() => {
+        let cancelled = false
+        void resolveBridgeConfig(window.location).then((config) => {
+          if (cancelled) return
+          if (typeof config.token === 'string' && config.token !== '') {
+            setToken(config.token)
+            setStatus('ready')
+          } else {
+            setStatus('unavailable')
+          }
+        }).catch(() => {
+          if (cancelled) return
+          setStatus('unavailable')
+        })
+        return () => { cancelled = true }
+      }, [])
+
+      const onCopy = React.useCallback(async () => {
+        if (token === '') return
+        const ok = await copyText(token, '.dshBridgeAddressValue[data-kind="token"]')
+        if (ok) setCopied(true)
+      }, [token, setCopied])
+
+      const value = status === 'loading'
+        ? t('bridgeToken.loading')
+        : status === 'ready'
+          ? token
+          : t('bridgeToken.unavailable')
+
+      return React.createElement(
+        'div',
+        { className: 'dshBridgeAddressRow' },
+        React.createElement('div', { className: 'dshBridgeAddressTitle' }, t('bridgeToken.title')),
+        React.createElement('p', { className: 'dshBridgeAddressHelp' }, t('bridgeToken.help')),
+        React.createElement(
+          'div',
+          { className: 'dshBridgeAddressBody' },
+          React.createElement(
+            'code',
+            {
+              className: 'dshBridgeAddressValue',
+              'data-kind': 'token',
+              title: status === 'ready' ? token : undefined,
+            },
+            value,
+          ),
+          React.createElement(
+            'button',
+            {
+              type: 'button',
+              className: 'dshBridgeAddressCopy',
+              disabled: status !== 'ready' || token === '',
+              onClick: () => { void onCopy() },
+            },
+            copied ? t('bridgeToken.copied') : t('bridgeToken.copy'),
+          ),
+        ),
+      )
+    }
+
     function apply(ctx) {
       ctx.effect(() => installStyle(), 'bridge-browser: settings row styles')
       ctx.effect(
@@ -171,6 +261,12 @@ window.__ModuleLoader__.load({
         order: 100,
         locale: LOCALE_NS,
       }, BridgeAddressRow))
+      ctx.slots.inject('settings.general.item', () => ctx.slots.register({
+        name: 'settings.general.item',
+        id: 'bridge-browser-token',
+        order: 101,
+        locale: LOCALE_NS,
+      }, BridgeTokenRow))
     }
 
     module.exports.apply = apply

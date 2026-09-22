@@ -296,11 +296,14 @@ describe('real Loader composition', () => {
     expect(browserPrompt).not.toMatch(/\p{Script=Han}/u)
 
     // Zero-config discovery endpoint answers with the bridge WebSocket URL.
+    // Loopback callers also receive the bearer token for the host settings copy row.
     const configResponse = await fetch(`http://127.0.0.1:${port}/ext/bridge-config`)
     expect(configResponse.status).toBe(200)
-    const config = await configResponse.json() as { wsUrl?: unknown }
+    const config = await configResponse.json() as { wsUrl?: unknown; token?: unknown }
     expect(typeof config.wsUrl).toBe('string')
     expect(config.wsUrl).toBe(`ws://127.0.0.1:${port}/ext/bridge`)
+    expect(typeof config.token).toBe('string')
+    expect(config.token).toMatch(/^[0-9a-f]{64}$/)
     expect(tools.get('browser_click')).toBeDefined()
     expect(tools.get('browser_navigate')).toBeDefined()
 
