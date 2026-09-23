@@ -13,7 +13,7 @@ import type { BridgeCaps } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
 import type { ServerFrame } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
 import type { BridgeState } from '../background/bridge.ts'
 import type { AffinityTab, TabAffinityDecision, TabAffinityState } from '../background/tab-affinity.ts'
-import { connectPanel, PanelRpcError, type PanelApi, type PanelSettings } from './api.ts'
+import { connectPanel, PanelRpcError, type AutomationSignalsSnapshot, type PanelApi, type PanelSettings } from './api.ts'
 import { renderMarkdown } from './markdown.ts'
 import whaleUrl from '../../assets/icons/deepseek-256.png'
 import type { ApprovalDecision, ApprovalRequest } from '../security/approval.ts'
@@ -391,21 +391,54 @@ function showsTabAffinityBanner(state: TabAffinityState | null): boolean {
 function ControlledPageStrip({
   state,
   copy,
+  probeEnabled,
+  signals,
 }: {
   state: TabAffinityState | null
   copy: PanelCopy
+  probeEnabled: boolean
+  /** undefined = scanning; null = finished but unavailable; snapshot = result. */
+  signals: AutomationSignalsSnapshot | null | undefined
 }): React.JSX.Element | null {
   if (state === null || state.controlled === null || showsTabAffinityBanner(state)) return null
   const label = tabLabel(state.controlled, copy.tabHandoff.unknownTab)
   const host = tabHostname(state.controlled)
   const detail = host !== null && host !== label ? host : null
   const tooltip = state.controlled.url.trim() === '' ? label : state.controlled.url
+  const level = signals?.level
+  const signalsValue = signals === undefined
+    ? copy.controlledPage.signalsPending
+    : signals === null
+      ? copy.controlledPage.signalsUnavailable
+      : copy.controlledPage.signalsLevel(signals.level)
 
   return (
-    <div className="controlled-page" role="status" title={tooltip}>
-      <span className="controlled-page-label">{copy.controlledPage.label}</span>
-      <span className="controlled-page-title">{label}</span>
-      {detail !== null && <span className="controlled-page-host">{detail}</span>}
+    <div className="controlled-page-block">
+      <div className="controlled-page" role="status" title={tooltip}>
+        <span className="controlled-page-label">{copy.controlledPage.label}</span>
+        <span className="controlled-page-title">{label}</span>
+        {detail !== null && <span className="controlled-page-host">{detail}</span>}
+      </div>
+      {probeEnabled && (
+        <div
+          className="controlled-page-signals"
+          role="status"
+          title={copy.controlledPage.signalsHint}
+          aria-label={signalsValue}
+        >
+          <span className="controlled-page-signals-label">{copy.controlledPage.signalsLabel}</span>
+          <div className="controlled-page-signals-meter" data-level={level ?? 0}>
+            {([1, 2, 3, 4, 5] as const).map((n) => (
+              <span
+                key={n}
+                data-n={n}
+                className={`controlled-page-signals-seg${level !== undefined && n <= level ? ' is-on' : ''}`}
+              />
+            ))}
+          </div>
+          <span className="controlled-page-signals-value">{signalsValue}</span>
+        </div>
+      )}
     </div>
   )
 }
@@ -670,6 +703,7 @@ export function App(): React.JSX.Element {
   const [showTextSize, setShowTextSize] = useState(false)
   const [approvalQueue, setApprovalQueue] = useState<ApprovalRequest[]>([])
   const [tabAffinity, setTabAffinity] = useState<TabAffinityState | null>(null)
+  const [automationSignals, setAutomationSignals] = useState<AutomationSignalsSnapshot | null | undefined>(undefined)
   const [trustedOriginInput, setTrustedOriginInput] = useState('')
   const [error, setError] = useState<string | null>(null)
   const [showSessionPicker, setShowSessionPicker] = useState(false)
@@ -804,6 +838,29 @@ export function App(): React.JSX.Element {
       })
     })
   }, [])
+
+  // Surface-signal meter under Controlling: scan once when the controlled tab
+  // (or probe setting) changes.
+  const probeEnabled = settings?.automationSignalsProbe === true
+  const controlledKey = tabAffinity?.controlled === null || tabAffinity?.controlled === undefined
+    ? ''
+    : `${tabAffinity.controlled.tabId}:${tabAffinity.controlled.url}`
+  const showControlledStrip = tabAffinity !== null
+    && tabAffinity.controlled !== null
+    && !showsTabAffinityBanner(tabAffinity)
+  useEffect(() => {
+    if (!probeEnabled || !showControlledStrip || controlledKey === '') {
+      setAutomationSignals(undefined)
+      return
+    }
+    let cancelled = false
+    setAutomationSignals(undefined)
+    void api.probeAutomationSignals().then(
+      (snapshot) => { if (!cancelled) setAutomationSignals(snapshot) },
+      () => { if (!cancelled) setAutomationSignals(null) },
+    )
+    return () => { cancelled = true }
+  }, [api, probeEnabled, showControlledStrip, controlledKey])
 
   // 每次连接重启（连接配置变更/断线重连）都新建会话。状态消息逐条监听：
   // React 会把 stopped/connecting 等瞬时状态合并进同一帧渲染，依赖渲染
@@ -2077,7 +2134,12 @@ export function App(): React.JSX.Element {
           onStep={(direction) => changeUiScale(stepUiScale(uiScaleRef.current, direction))}
           onReset={() => changeUiScale(DEFAULT_UI_SCALE)} />
       )}
-      <ControlledPageStrip state={tabAffinity} copy={copy} />
+      <ControlledPageStrip
+        state={tabAffinity}
+        copy={copy}
+        probeEnabled={probeEnabled}
+        signals={automationSignals}
+      />
       <TabAffinityBanner state={tabAffinity} copy={copy} onDecision={decideTabAffinity} />
       {showSessionPicker && (
         <section className="session-picker" aria-label={copy.app.sessions}>

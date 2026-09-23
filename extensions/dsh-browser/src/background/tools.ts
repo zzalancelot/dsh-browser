@@ -161,7 +161,7 @@ function isInjectablePage(url: string | undefined): boolean {
 }
 
 /** Inject the packaged content script once per tab, coalescing concurrent recovery attempts. */
-async function injectContentScript(tabId: number): Promise<void> {
+export async function injectContentScript(tabId: number): Promise<void> {
   let pending = pendingInjections.get(tabId)
   if (pending === undefined) {
     pending = chrome.scripting.executeScript({

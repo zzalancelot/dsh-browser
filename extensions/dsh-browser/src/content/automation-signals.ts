@@ -211,7 +211,7 @@ export function collectAutomationSignals(
     // Ignore.
   }
 
-  const strongest = signals.some((s) => s.strength === 'strong')
+  const strongest: AutomationSignalsReport['strongest'] = signals.some((s) => s.strength === 'strong')
     ? 'strong'
     : signals.length > 0 ? 'weak' : 'none'
   const draft = { signals, strongest }

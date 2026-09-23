@@ -8,7 +8,7 @@
 import type { BridgeCaps, RespondResult } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
 import type { ServerFrame } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
 import type { BridgeState } from '../background/bridge.ts'
-import type { Settings } from '../background/index.ts'
+import type { Settings, AutomationSignalsSnapshot } from '../background/index.ts'
 import type { TabAffinityDecision, TabAffinityState } from '../background/tab-affinity.ts'
 import type { ApprovalDecision, ApprovalRequest } from '../security/approval.ts'
 import { parsePageSelection, type PageSelection } from '../selection.ts'
@@ -16,6 +16,9 @@ import { getUiLocale } from '../i18n.ts'
 
 /** Panel-side subset of the extension settings. */
 export type PanelSettings = Settings
+
+/** Re-export for the Controlling-strip meter. */
+export type { AutomationSignalsSnapshot }
 
 interface RpcFailurePayload {
   code?: unknown
@@ -89,7 +92,15 @@ interface SessionResumeHintMessage {
   sessionId: string | null
 }
 
-type BackgroundMessage = RpcResultMessage | RespondResultMessage | SettingsResultMessage | StatusMessage | EventMessage | ApprovalRequestMessage | ApprovalResolvedMessage | TabAffinityMessage | TabAffinityRebindResultMessage | SelectionMessage | SessionResumeHintMessage
+interface AutomationSignalsProbeResultMessage {
+  type: 'automation-signals.probe.result'
+  id: string
+  ok: boolean
+  result?: AutomationSignalsSnapshot | null
+  error?: { message?: unknown }
+}
+
+type BackgroundMessage = RpcResultMessage | RespondResultMessage | SettingsResultMessage | StatusMessage | EventMessage | ApprovalRequestMessage | ApprovalResolvedMessage | TabAffinityMessage | TabAffinityRebindResultMessage | SelectionMessage | SessionResumeHintMessage | AutomationSignalsProbeResultMessage
 
 /** Structured gateway failure retained for product-level error handling. */
 export class PanelRpcError extends Error {
@@ -132,6 +143,8 @@ export interface PanelApi {
   setActiveSession(sessionId: string, isNew?: boolean): Promise<void>
   updateSettings(settings: Partial<PanelSettings>): Promise<void>
   requestStatus(): Promise<void>
+  /** Heuristic surface-signal snapshot for the controlled tab (null when disabled/unavailable). */
+  probeAutomationSignals(): Promise<AutomationSignalsSnapshot | null>
 }
 
 /** Connect to the background service worker and return the panel API. */
@@ -148,6 +161,10 @@ export function connectPanel(): PanelApi {
   }>()
   const pendingRebinds = new Map<string, {
     resolve: () => void
+    reject: (error: Error) => void
+  }>()
+  const pendingProbes = new Map<string, {
+    resolve: (value: AutomationSignalsSnapshot | null) => void
     reject: (error: Error) => void
   }>()
   const statusListeners = new Set<(state: BridgeState, caps: BridgeCaps | null) => void>()
@@ -231,6 +248,16 @@ export function connectPanel(): PanelApi {
           ?? (getUiLocale() === 'zh' ? '无法绑定当前标签页' : 'Failed to bind the current tab')))
         break
       }
+      case 'automation-signals.probe.result': {
+        const entry = pendingProbes.get(msg.id)
+        if (entry === undefined) return
+        pendingProbes.delete(msg.id)
+        if (msg.ok) entry.resolve(msg.result ?? null)
+        else entry.reject(new Error(typeof msg.error?.message === 'string'
+          ? msg.error.message
+          : (getUiLocale() === 'zh' ? '信号扫描失败' : 'Automation signals probe failed')))
+        break
+      }
       case 'session.resume-hint':
         for (const listener of sessionResumeHintListeners) listener(msg.sessionId)
         break
@@ -242,7 +269,7 @@ export function connectPanel(): PanelApi {
     return cause instanceof Error ? cause : new Error(fallback)
   }
 
-  function failAll(error: Error, preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'settings'; id: string }): void {
+  function failAll(error: Error, preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'settings' | 'probe'; id: string }): void {
     for (const [id, entry] of pending) {
       if (preserve?.kind === 'rpc' && preserve.id === id) continue
       entry.reject(error)
@@ -263,6 +290,11 @@ export function connectPanel(): PanelApi {
       if (preserve?.kind === 'settings' && preserve.id === id) continue
       entry.reject(error)
       pendingSettings.delete(id)
+    }
+    for (const [id, entry] of pendingProbes) {
+      if (preserve?.kind === 'probe' && preserve.id === id) continue
+      entry.reject(error)
+      pendingProbes.delete(id)
     }
   }
 
@@ -298,7 +330,7 @@ export function connectPanel(): PanelApi {
   function invalidate(
     stale: chrome.runtime.Port,
     error: Error,
-    preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'settings'; id: string },
+    preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'settings' | 'probe'; id: string },
   ): void {
     if (port !== stale) return
     port = null
@@ -313,7 +345,7 @@ export function connectPanel(): PanelApi {
    */
   function send(
     message: unknown,
-    preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'settings'; id: string },
+    preserve?: { kind: 'rpc' | 'respond' | 'rebind' | 'settings' | 'probe'; id: string },
   ): Promise<void> {
     const current = port
     if (current !== null) {
@@ -453,6 +485,21 @@ export function connectPanel(): PanelApi {
     },
     requestStatus() {
       return send({ type: 'request-status' })
+    },
+    probeAutomationSignals() {
+      const id = crypto.randomUUID()
+      return new Promise<AutomationSignalsSnapshot | null>((resolve, reject) => {
+        const entry = { resolve, reject }
+        pendingProbes.set(id, entry)
+        void send(
+          { type: 'automation-signals.probe', id },
+          { kind: 'probe', id },
+        ).catch((cause: unknown) => {
+          if (pendingProbes.get(id) !== entry) return
+          pendingProbes.delete(id)
+          reject(connectionError(cause))
+        })
+      })
     },
   }
 }

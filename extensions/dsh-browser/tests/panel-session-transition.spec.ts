@@ -70,6 +70,7 @@ describe('panel session transitions', () => {
         .mockRejectedValueOnce(new Error('runtime port unavailable')),
       updateSettings: vi.fn(async () => {}),
       requestStatus: vi.fn(async () => {}),
+      probeAutomationSignals: vi.fn(async () => null),
     }
 
     root = createRoot(document.querySelector('#root')!)

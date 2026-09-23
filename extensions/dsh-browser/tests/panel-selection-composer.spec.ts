@@ -66,6 +66,7 @@ describe('attaching a page selection in the composer', () => {
       setActiveSession: vi.fn(async () => {}),
       updateSettings: vi.fn(async () => {}),
       requestStatus: vi.fn(async () => {}),
+      probeAutomationSignals: vi.fn(async () => null),
     }
     root = createRoot(document.querySelector('#root')!)
   })

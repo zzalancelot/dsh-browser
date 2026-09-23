@@ -29,6 +29,11 @@ export interface PanelCopy {
   }
   controlledPage: {
     label: string
+    signalsLabel: string
+    signalsHint: string
+    signalsPending: string
+    signalsUnavailable: string
+    signalsLevel: (level: number) => string
   }
   tabHandoff: {
     eyebrow: string
@@ -274,6 +279,15 @@ const EN: PanelCopy = {
   },
   controlledPage: {
     label: 'Controlling',
+    signalsLabel: 'Risk level',
+    signalsHint: 'Heuristic reminder from client-visible anti-automation signals — not a verdict.',
+    signalsPending: 'Scanning…',
+    signalsUnavailable: 'Unavailable',
+    signalsLevel: (level) => {
+      if (level <= 2) return 'Low'
+      if (level <= 3) return 'Medium'
+      return 'High'
+    },
   },
   tabHandoff: {
     eyebrow: 'Page handoff',
@@ -331,7 +345,7 @@ const EN: PanelCopy = {
     screenshotEnhancement: 'Screenshot enhancement',
     screenshotEnhancementHelp: 'Allow the assistant to capture the controlled tab when text snapshot cannot describe the page (canvas, captcha, graphics). Off by default.',
     automationSignalsProbe: 'Automation signals probe',
-    automationSignalsProbeHelp: 'Allow the assistant to scan the controlled page for client-visible anti-automation / captcha signals. Heuristic only; off by default.',
+    automationSignalsProbeHelp: 'When on, show a 1–5 surface-signal reminder under Controlling for the controlled page (client-visible heuristics only). Also unlocks the optional scan tool. Off by default.',
     stealthMode: 'Stealth input',
     stealthModeHelp: 'Reduce mechanical click fingerprints: short pointer trail before clicks, and scroll only when the target is off-screen. On by default. Does not make events trusted (isTrusted stays false).',
     writeObservationAttribute: 'Write observation attributes',
@@ -519,6 +533,15 @@ const ZH: PanelCopy = {
   },
   controlledPage: {
     label: '正在控制',
+    signalsLabel: '风控等级',
+    signalsHint: '仅根据客户端可见的反自动化信号做启发式提示，不是结论。',
+    signalsPending: '扫描中…',
+    signalsUnavailable: '暂不可用',
+    signalsLevel: (level) => {
+      if (level <= 2) return '低'
+      if (level <= 3) return '中'
+      return '高'
+    },
   },
   tabHandoff: {
     eyebrow: '页面交接',
@@ -576,7 +599,7 @@ const ZH: PanelCopy = {
     screenshotEnhancement: '截图增强模式',
     screenshotEnhancementHelp: '开启后，当文本快照无法描述页面（canvas、验证码、图形等）时，助手可截取受控标签页作为视觉兜底。默认关闭。',
     automationSignalsProbe: '自动化信号探针',
-    automationSignalsProbeHelp: '开启后，助手可扫描受控页面上客户端可见的反自动化/验证码信号（启发式，非结论）。默认关闭。',
+    automationSignalsProbeHelp: '开启后，在「正在控制」横幅下方显示受控页的 1–5 级表面信号提示（仅客户端可见启发式）。同时解锁可选扫描工具。默认关闭。',
     stealthMode: '隐身输入',
     stealthModeHelp: '减轻机械点击指纹：点击前补短暂指针轨迹，且仅在目标离开视口时滚动。默认开启。无法把事件变成 isTrusted（内容脚本限制）。',
     writeObservationAttribute: '写入观察属性',

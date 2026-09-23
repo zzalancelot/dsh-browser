@@ -53,6 +53,7 @@ import { createRpc } from './rpc.ts'
 import {
   dispatchOpenTab,
   dispatchToolCall,
+  injectContentScript,
   isNavigationCandidateTool,
   isTabManagementTool,
   resetTabSnapshot,
@@ -110,8 +111,8 @@ export interface Settings {
    */
   screenshotEnhancement: boolean
   /**
-   * Allow `browser_automation_signals` to scan the controlled page for
-   * client-visible anti-automation signals. Off by default.
+   * Show a 1–5 surface-signal reminder under the Controlling strip, and unlock
+   * the optional `browser_automation_signals` tool. Off by default.
    */
   automationSignalsProbe: boolean
   /**
@@ -124,6 +125,14 @@ export interface Settings {
    * because the attribute is a durable page fingerprint.
    */
   writeObservationAttribute: boolean
+}
+
+/** Slim probe snapshot pushed to the side panel Controlling strip. */
+export interface AutomationSignalsSnapshot {
+  level: 1 | 2 | 3 | 4 | 5
+  signalCount: number
+  strongest: 'none' | 'weak' | 'strong'
+  url: string
 }
 
 const SETTINGS_DEFAULTS: Settings = {
@@ -673,7 +682,8 @@ function observeActiveSummary(summary: AffinityTab): void {
     } else {
       cancelPendingApprovals()
     }
-    resetTabSnapshot(next.controlled.tabId)
+    const followed = next.controlled
+    if (followed !== null) resetTabSnapshot(followed.tabId)
   }
   persistTabAffinity()
   broadcastTabAffinity()
@@ -1674,6 +1684,81 @@ chrome.runtime.onConnect.addListener((port) => {
           if (current?.controller !== controller) return
           clearTimeout(current.timer)
           tabAffinityRebinds.delete(requestId)
+        })
+        break
+      }
+      case 'automation-signals.probe': {
+        const request = message as { id?: unknown }
+        if (typeof request.id !== 'string') break
+        const requestId = request.id
+        void settingsReady.then(async () => {
+          const reply = (payload: {
+            ok: boolean
+            result?: AutomationSignalsSnapshot | null
+            error?: { message: string }
+          }): void => {
+            try {
+              port.postMessage({ type: 'automation-signals.probe.result', id: requestId, ...payload })
+            } catch { /* port closed */ }
+          }
+          try {
+            const controlled = tabAffinity.snapshot().controlled
+            if (controlled === null || !/^https?:\/\//i.test(controlled.url)) {
+              reply({ ok: true, result: null })
+              return
+            }
+            const tabId = controlled.tabId
+            const ask = (): Promise<unknown> => chrome.tabs.sendMessage(tabId, { type: 'DSH_AUTOMATION_SIGNALS' })
+            let response: unknown
+            try {
+              response = await ask()
+            } catch (error: unknown) {
+              const missing = error instanceof Error && error.message.includes('Receiving end does not exist')
+              if (!missing) {
+                reply({ ok: true, result: null })
+                return
+              }
+              // Tabs open before reload keep a stale (or absent) content script;
+              // recover the same way tool dispatch does.
+              try {
+                await injectContentScript(tabId)
+                response = await ask()
+              } catch {
+                reply({ ok: true, result: null })
+                return
+              }
+            }
+            const report = (response as {
+              ok?: unknown
+              result?: { report?: Record<string, unknown> }
+            } | null)?.result?.report
+            const level = report?.level
+            if (response === null
+              || typeof response !== 'object'
+              || (response as { ok?: unknown }).ok !== true
+              || report === undefined
+              || (level !== 1 && level !== 2 && level !== 3 && level !== 4 && level !== 5)) {
+              reply({ ok: true, result: null })
+              return
+            }
+            const strongest = report.strongest === 'strong' || report.strongest === 'weak'
+              ? report.strongest
+              : 'none'
+            reply({
+              ok: true,
+              result: {
+                level,
+                signalCount: typeof report.signalCount === 'number' ? report.signalCount : 0,
+                strongest,
+                url: typeof report.url === 'string' ? report.url : controlled.url,
+              },
+            })
+          } catch (error: unknown) {
+            reply({
+              ok: false,
+              error: { message: error instanceof Error ? error.message : String(error) },
+            })
+          }
         })
         break
       }
