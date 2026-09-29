@@ -24,8 +24,10 @@ function harness(options: {
   const open = vi.fn(options.open ?? (async (_endpoint, _payload, signal) => ({
     async *[Symbol.asyncIterator]() { await abortWait(signal) },
   })))
+  const requestBodies: unknown[] = []
   const fetch = vi.fn(options.fetch ?? (async (request: Request) => {
     const body = await request.clone().json() as { rpcId: string }
+    requestBodies.push(body)
     return Response.json({ type: 'server-response', rpcId: body.rpcId, result: { ok: true } })
   }))
   const gateway: TypertGatewayLike = {
@@ -45,10 +47,10 @@ function harness(options: {
   const connection: HostConnectionLike = {
     createSharedFetchHandler: () => ({ fetch }),
   }
-  return { api: createRemoteHostApi(gateway, connection), invoke, open, fetch }
+  return { api: createRemoteHostApi(gateway, connection), invoke, open, fetch, requestBodies }
 }
 
-describe('dsh 0.1.5 Remote Host adapter', () => {
+describe('dsh 0.2 Remote Host adapter', () => {
   it('preserves V3 durable streams and orders reconnect baselines before transient frames without advancing the durable cursor', async () => {
     const baseline = {
       revision: 2,
@@ -589,7 +591,7 @@ describe('dsh 0.1.5 Remote Host adapter', () => {
   })
 
   it('declines Desktop user-question waterfalls so the native UI can answer', async () => {
-    const { api, fetch } = harness({
+    const { api, fetch, requestBodies } = harness({
       open: async (endpoint, _payload, signal) => {
         if (endpoint !== '$events') throw new Error(endpoint)
         return {
@@ -611,8 +613,8 @@ describe('dsh 0.1.5 Remote Host adapter', () => {
     const abort = new AbortController()
     const iterator = api.events(abort.signal)[Symbol.asyncIterator]()
     const pending = iterator.next()
-    await vi.waitFor(() => { expect(fetch).toHaveBeenCalledOnce() })
-    expect(await (fetch.mock.calls[0]?.[0] as Request).clone().json()).toMatchObject({
+    await vi.waitFor(() => { expect(fetch.mock.calls.length).toBe(1) })
+    expect(requestBodies[0]).toMatchObject({
       payload: { args: { eventId: 'question-desktop', outcome: { kind: 'next' } } },
     })
     abort.abort()
@@ -621,7 +623,7 @@ describe('dsh 0.1.5 Remote Host adapter', () => {
 
   it('does not claim session ownership when prompt fails', async () => {
     const error = Object.assign(new Error('rejected'), { code: 'bad-request', details: {} })
-    const { api, fetch } = harness({
+    const { api, fetch, requestBodies } = harness({
       invoke: async () => { throw error },
       open: async (endpoint, _payload, signal) => {
         if (endpoint === 'session/follow') {
@@ -661,8 +663,8 @@ describe('dsh 0.1.5 Remote Host adapter', () => {
     const abort = new AbortController()
     const iterator = api.events(abort.signal)[Symbol.asyncIterator]()
     const pending = iterator.next()
-    await vi.waitFor(() => { expect(fetch).toHaveBeenCalledOnce() })
-    expect(await (fetch.mock.calls[0]?.[0] as Request).clone().json()).toMatchObject({
+    await vi.waitFor(() => { expect(fetch.mock.calls.length).toBe(1) })
+    expect(requestBodies[0]).toMatchObject({
       payload: { args: { eventId: 'question-fail', outcome: { kind: 'next' } } },
     })
     abort.abort()
@@ -671,7 +673,7 @@ describe('dsh 0.1.5 Remote Host adapter', () => {
 
   it('delegates unhandled waterfalls and preserves Gateway failure fields', async () => {
     const error = Object.assign(new Error('gone'), { code: 'session-not-found', details: { sessionId: 's1' } })
-    const { api, fetch } = harness({
+    const { api, fetch, requestBodies } = harness({
       invoke: async () => { throw error },
       open: async (endpoint, _payload, signal) => ({
         async *[Symbol.asyncIterator]() {
@@ -692,8 +694,8 @@ describe('dsh 0.1.5 Remote Host adapter', () => {
     const abort = new AbortController()
     const iterator = api.events(abort.signal)[Symbol.asyncIterator]()
     const pending = iterator.next()
-    await vi.waitFor(() => { expect(fetch).toHaveBeenCalledOnce() })
-    expect(await (fetch.mock.calls[0]?.[0] as Request).clone().json()).toMatchObject({
+    await vi.waitFor(() => { expect(fetch.mock.calls.length).toBe(1) })
+    expect(requestBodies[0]).toMatchObject({
       payload: { args: { eventId: 'approval-1', outcome: { kind: 'next' } } },
     })
     abort.abort()

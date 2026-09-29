@@ -46,7 +46,7 @@ afterEach(async () => {
 })
 
 /**
- * Minimal structural implementation of the dsh 0.1.5 Host seams. Focused
+ * Minimal structural implementation of the dsh 0.2 Host seams. Focused
  * Remote-adapter tests pin the argument and stream contracts separately; this
  * fixture verifies Loader injection, real sockets, and real Session storage.
  */
@@ -249,7 +249,7 @@ describe('real Loader composition', () => {
     }
 
     // This snapshot arrives before async creation publishes the Agent. The
-    // bridge's real session-start listener must flush it into the new inbox.
+    // bridge's real agent/created listener must flush it into the new inbox.
     await followPage('before-create', 'Page: provisional tab')
     const agent = await ctx.agentLoop.create(sessionId, { provider: 'test', model: 'test' })
     expect(ctx.agents.get(sessionId)).toBe(agent)
@@ -257,7 +257,7 @@ describe('real Loader composition', () => {
     expect(agent.inbox.nextStep[0]?.content).toContainEqual({ type: 'text', text: expect.stringContaining('provisional tab') })
 
     const steering = createUserMessage({
-      content: [{ type: 'text', text: 'Keep my page selection.' }], source: { kind: 'human' },
+      content: [{ type: 'text', text: 'Keep my page selection.' }], source: { kind: 'user' },
     })
     agent.inbox.append('next-step', steering)
     await followPage('live-page', 'Page: current tab')
@@ -271,7 +271,7 @@ describe('real Loader composition', () => {
       && event.data.outcome === 'canceled')).toBe(true)
 
     agent.followup(createUserMessage({
-      content: [{ type: 'text', text: 'Summarize this page.' }], source: { kind: 'human' },
+      content: [{ type: 'text', text: 'Summarize this page.' }], source: { kind: 'user' },
     }))
     await agent.whenIdle()
 
@@ -303,7 +303,7 @@ describe('real Loader composition', () => {
     expect(typeof config.wsUrl).toBe('string')
     expect(config.wsUrl).toBe(`ws://127.0.0.1:${port}/ext/bridge`)
     expect(typeof config.token).toBe('string')
-    expect(config.token).toMatch(/^[0-9a-f]{64}$/)
+    expect(config.token).toBe(TOKEN)
     expect(tools.get('browser_click')).toBeDefined()
     expect(tools.get('browser_navigate')).toBeDefined()
 
