@@ -100,6 +100,7 @@ interface AutomationSignalsProbeResultMessage {
   error?: { message?: unknown }
 }
 
+
 type BackgroundMessage = RpcResultMessage | RespondResultMessage | SettingsResultMessage | StatusMessage | EventMessage | ApprovalRequestMessage | ApprovalResolvedMessage | TabAffinityMessage | TabAffinityRebindResultMessage | SelectionMessage | SessionResumeHintMessage | AutomationSignalsProbeResultMessage
 
 /** Structured gateway failure retained for product-level error handling. */
@@ -174,9 +175,9 @@ export function connectPanel(): PanelApi {
   const tabAffinityListeners = new Set<(state: TabAffinityState) => void>()
   const selectionListeners = new Set<(selection: PageSelection | null) => void>()
   const sessionResumeHintListeners = new Set<(sessionId: string | null) => void>()
-
   let port: chrome.runtime.Port | null = null
   let reconnectPromise: Promise<chrome.runtime.Port> | null = null
+
 
   function onMessage(message: unknown): void {
     if (typeof message !== 'object' || message === null) return

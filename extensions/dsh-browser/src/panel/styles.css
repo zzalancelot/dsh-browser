@@ -2219,7 +2219,9 @@ textarea:focus-visible {
 .settings label {
   display: grid;
   min-width: 0;
-  grid-template-columns: 1fr auto;
+  /* Title + help stack vertically so CJK titles stay on one line and
+     long help can wrap without competing for the same row. */
+  grid-template-columns: minmax(0, 1fr);
   gap: 3px 10px;
   padding: 13px;
   border-bottom: 1px solid var(--line);
@@ -2236,11 +2238,16 @@ textarea:focus-visible {
   line-height: 1.35;
 }
 
+.settings label:not(.setting-toggle) > span {
+  white-space: nowrap;
+}
+
 .settings label > small {
+  min-width: 0;
   color: var(--faint);
   font-size: calc(9.5px * var(--ui-scale));
   line-height: 1.4;
-  text-align: right;
+  overflow-wrap: anywhere;
 }
 
 .settings label.setting-toggle {
@@ -2269,6 +2276,8 @@ textarea:focus-visible {
   color: var(--faint);
   font-size: calc(9.5px * var(--ui-scale));
   line-height: 1.45;
+  white-space: normal;
+  overflow-wrap: anywhere;
 }
 
 .settings .setting-toggle-input {
@@ -3188,3 +3197,4 @@ textarea:focus-visible {
   background: var(--canvas);
   color: var(--ink-strong);
 }
+

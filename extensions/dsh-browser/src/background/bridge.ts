@@ -34,11 +34,16 @@ type BridgeProbe = (url: string) => Promise<boolean>
 /** Re-discover a bridge URL after repeated probe failures. */
 export type BridgeResolveUrl = (shouldContinue: () => boolean) => Promise<string | undefined>
 
+/** Close codes that mean "this host answered HTTP but is not usable — try another". */
+const REDISCOVER_CLOSE_CODES = new Set([1011])
+
 const BACKOFF_BASE_MS = 500
 const BACKOFF_MAX_MS = 10_000
 const HELLO_ACK_TIMEOUT_MS = 5_000
 /** Probe failures before asking `resolveUrl` for a replacement address. */
 const REDISCOVER_AFTER_FAILURES = 3
+/** Stream/auth failures (e.g. 1011) before asking `resolveUrl` for a replacement. */
+const REDISCOVER_AFTER_STREAM_FAILURES = 1
 
 /**
  * Owns one WebSocket connection generation and the reconnect loop.
@@ -123,6 +128,7 @@ export class BridgeClient {
 
   private async loop(generation: number): Promise<void> {
     let failStreak = 0
+    let streamFailStreak = 0
     while (this.running && generation === this.generation) {
       if (!this.retryAllowed()) return
       const reachable = await this.probe(this.url).catch(() => false)
@@ -137,6 +143,7 @@ export class BridgeClient {
           if (next !== undefined && next !== this.url) {
             this.url = next
             this.attempt = 0
+            streamFailStreak = 0
             this.emitState('connecting')
             continue
           }
@@ -149,10 +156,14 @@ export class BridgeClient {
       failStreak = 0
       const socket = new WebSocket(this.url)
       this.ws = socket
+      let closeCode = 0
+      let closeReason = ''
       // A replacement is an ownership handoff, not a transient transport
       // failure. Yield permanently so two open profiles cannot reconnect in a
       // tight loop and repeatedly evict one another.
       socket.addEventListener('close', (event) => {
+        closeCode = event.code
+        closeReason = event.reason || ''
         if (event.code !== 4000 || this.ws !== socket || !this.running) return
         this.running = false
         this.clearAckTimer()
@@ -163,8 +174,14 @@ export class BridgeClient {
 
       await new Promise<void>((resolve) => {
         socket.addEventListener('open', () => { resolve() }, { once: true })
-        socket.addEventListener('close', () => { resolve() }, { once: true })
-        socket.addEventListener('error', () => { resolve() }, { once: true })
+        socket.addEventListener('close', (event) => {
+          closeCode = event.code
+          closeReason = event.reason || ''
+          resolve()
+        }, { once: true })
+        socket.addEventListener('error', () => {
+          resolve()
+        }, { once: true })
       })
       if (!this.running || generation !== this.generation) {
         socket.close()
@@ -183,6 +200,7 @@ export class BridgeClient {
       } satisfies ClientFrame))
 
       let authed = false
+      let sawStreamFailed = false
       const accepted = await new Promise<boolean>((resolve) => {
         const onMessage = (event: MessageEvent): void => {
           const frame = parseBridgeFrame(String(event.data))
@@ -193,9 +211,17 @@ export class BridgeClient {
               this.clearAckTimer()
               resolve(true)
               this.sinks.onHelloOk(frame.caps)
-            } else if (frame.t === 'error' || frame.t === 'rpc.result' || frame.t === 'event') {
+            } else if (frame.t === 'error') {
+              if (frame.code === 'stream-failed') sawStreamFailed = true
+              this.sinks.onFrame(frame)
+            } else if (frame.t === 'rpc.result' || frame.t === 'event') {
               this.sinks.onFrame(frame)
             }
+            return
+          }
+          if (frame.t === 'error' && frame.code === 'stream-failed') {
+            sawStreamFailed = true
+            this.sinks.onFrame(frame)
             return
           }
           if (frame.t === 'ping') {
@@ -205,14 +231,32 @@ export class BridgeClient {
           if (isServerFrame(frame)) this.sinks.onFrame(frame)
         }
         socket.addEventListener('message', onMessage)
-        socket.addEventListener('close', () => {
+        socket.addEventListener('close', (event) => {
+          closeCode = event.code
+          closeReason = event.reason || ''
           this.clearAckTimer()
           resolve(false)
         }, { once: true })
-        this.ackTimer = setTimeout(() => resolve(false), HELLO_ACK_TIMEOUT_MS)
+        this.ackTimer = setTimeout(() => {
+          resolve(false)
+        }, HELLO_ACK_TIMEOUT_MS)
       })
       if (!accepted || !this.running || generation !== this.generation) {
         await this.fail(socket)
+        if (sawStreamFailed || REDISCOVER_CLOSE_CODES.has(closeCode)) {
+          streamFailStreak += 1
+          if (streamFailStreak >= REDISCOVER_AFTER_STREAM_FAILURES && this.resolveUrl !== undefined) {
+            const next = await this.resolveUrl(() => this.running && generation === this.generation)
+            if (!this.running || generation !== this.generation) return
+            if (next !== undefined && next !== this.url) {
+              this.url = next
+              this.attempt = 0
+              streamFailStreak = 0
+              this.emitState('connecting')
+              continue
+            }
+          }
+        }
         continue
       }
 
@@ -220,12 +264,38 @@ export class BridgeClient {
       this.emitState('connected')
 
       await new Promise<void>((resolve) => {
-        socket.addEventListener('close', () => resolve(), { once: true })
-        socket.addEventListener('error', () => resolve(), { once: true })
+        socket.addEventListener('close', (event) => {
+          closeCode = event.code
+          closeReason = event.reason || ''
+          resolve()
+        }, { once: true })
+        socket.addEventListener('error', () => {
+          resolve()
+        }, { once: true })
       })
       if (!this.running || generation !== this.generation) {
         socket.close()
         return
+      }
+
+      // Host answered hello but then dropped the event stream (common on a
+      // Desktop ephemeral port while CLI :3080 is healthy). Forget and switch.
+      if (sawStreamFailed || REDISCOVER_CLOSE_CODES.has(closeCode)) {
+        streamFailStreak += 1
+        if (streamFailStreak >= REDISCOVER_AFTER_STREAM_FAILURES && this.resolveUrl !== undefined) {
+          const broken = this.url
+          const next = await this.resolveUrl(() => this.running && generation === this.generation)
+          if (!this.running || generation !== this.generation) return
+          if (next !== undefined && next !== broken) {
+            this.url = next
+            this.attempt = 0
+            streamFailStreak = 0
+            this.emitState('connecting')
+            continue
+          }
+        }
+      } else {
+        streamFailStreak = 0
       }
       await this.fail(socket)
     }

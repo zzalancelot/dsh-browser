@@ -151,8 +151,13 @@ const SETTINGS_DEFAULTS: Settings = {
   writeObservationAttribute: false,
 }
 
-/** Legacy default that used to be written as a "manual" override; treat as empty. */
+/**
+ * Legacy short form that used to be written as a "manual" override. Expand to
+ * the real WS path instead of clearing — wiping `ws://127.0.0.1:3080` made
+ * intentional local overrides look like they "did nothing".
+ */
 const LEGACY_LOCAL_URL = 'ws://127.0.0.1:3080'
+const LEGACY_LOCAL_BRIDGE_URL = 'ws://127.0.0.1:3080/ext/bridge'
 
 const autoCacheIo = createChromeAutoCacheIo()
 
@@ -173,6 +178,7 @@ async function probeBridge(url: string): Promise<boolean> {
 async function persistAutoBridgeUrl(url: string): Promise<void> {
   await rememberAutoBridgeUrl(url, autoCacheIo.saveAuto, autoCacheIo.loadAuto)
 }
+
 
 /**
  * Re-run layered discovery while the panel lease is active.
@@ -290,8 +296,14 @@ async function loadSettings(): Promise<Settings> {
   const stored = await chrome.storage.local.get(STORAGE_KEY)
   const loaded = normalizeSettings({ ...SETTINGS_DEFAULTS, ...(stored[STORAGE_KEY] as Partial<Settings> | undefined) })
   if (loaded.bridgeUrl === LEGACY_LOCAL_URL || loaded.bridgeUrl === `${LEGACY_LOCAL_URL}/`) {
-    loaded.bridgeUrl = ''
+    loaded.bridgeUrl = LEGACY_LOCAL_BRIDGE_URL
     await chrome.storage.local.set({ [STORAGE_KEY]: loaded })
+  } else if (loaded.bridgeUrl.trim() !== '') {
+    const normalized = normalizeBridgeUrl(loaded.bridgeUrl)
+    if (normalized !== loaded.bridgeUrl) {
+      loaded.bridgeUrl = normalized
+      await chrome.storage.local.set({ [STORAGE_KEY]: loaded })
+    }
   }
   return loaded
 }
@@ -1339,13 +1351,17 @@ function cancelAllToolCalls(): void {
 /** (Re)start the bridge with the current settings. 零配置：地址留空时自动探测；回环连接无需 token。 */
 async function startBridge(): Promise<void> {
   const revision = ++bridgeStartRevision
-  if (panelPorts.size === 0) return
+  if (panelPorts.size === 0) {
+    return
+  }
   const resolved = await resolveActiveBridgeUrl(
     () => revision === bridgeStartRevision && panelPorts.size > 0,
   )
   // Discovery is asynchronous. A panel may have closed or a newer settings
   // update may have started while its fetches were in flight.
-  if (revision !== bridgeStartRevision || panelPorts.size === 0) return
+  if (revision !== bridgeStartRevision || panelPorts.size === 0) {
+    return
+  }
   if (resolved === undefined) {
     bridge?.stop()
     bridge = null
