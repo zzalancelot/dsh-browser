@@ -47,6 +47,11 @@ export interface TypertGatewayLike {
   }): Promise<unknown>
 }
 
+/**
+ * Empty Client→Host uplink for in-process Host wireStream.open calls.
+ * dsh 0.2 requires the uplink slot; Gateway-owned endpoints ($events) discard
+ * it immediately, and Remote streams still need a valid AsyncIterable.
+ */
 const EMPTY_WIRE_UPLINK: AsyncIterable<unknown> = {
   async *[Symbol.asyncIterator]() { /* no uplink items */ },
 }
