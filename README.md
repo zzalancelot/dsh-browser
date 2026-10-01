@@ -11,7 +11,7 @@ Connect [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) to t
 Browser operation is text-first: pages become structured text with a numbered inventory of interactive elements, and the model addresses those elements by number. When that text inventory cannot describe the page (canvas, captcha, graphics, or scrape failure), enabling **Screenshot enhancement** in Settings unlocks `browser_screenshot` as a visual fallback. dsh 0.1.5 multimodal chat remains separate—the side panel also accepts user-attached PNG, JPEG, WebP, and GIF images when the host advertises image support.
 
 > [!IMPORTANT]
-> The workspace pins dsh 0.2.0-rc.1, the minimum supported runtime. Older DSH releases are not supported.
+> The workspace pins dsh 0.2.0-rc.2, the minimum supported runtime. Older DSH releases are not supported.
 
 ## Quick install
 
@@ -148,7 +148,7 @@ cd ~/.dsh/dsh-browser && pnpm start
 From a source checkout, run `pnpm start` in the repository root. The exact supported public runtime is:
 
 ```sh
-npx @deepseek-ai/dsh@0.2.0-rc.1 web
+npx @deepseek-ai/dsh@0.2.0-rc.2 web
 ```
 
 Local Chrome use requires no configuration; Firefox requires the local bridge token described above. Open a page, click the DeepSeek whale icon, and wait for **Connected**. Existing HTTP(S) tabs are instrumented on the first action. On browser-protected pages and extension stores, the model can read tab metadata and use browser-level HTTP(S) navigation, back, forward, and reload, but it cannot inspect or operate the protected page DOM.
