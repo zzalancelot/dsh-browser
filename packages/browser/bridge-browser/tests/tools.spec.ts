@@ -43,6 +43,28 @@ describe('registerBrowserTools', () => {
 
     await (tool.definition.execute as (args: unknown, e: { signal: AbortSignal }) => Promise<unknown>)({ selector: '.add-btn', nth: 0 }, exec)
     expect(requestTool).toHaveBeenLastCalledWith('browser_click', { selector: '.add-btn', nth: 0 }, exec.signal, 1_000)
+
+    await (tool.definition.execute as (args: unknown, e: { signal: AbortSignal }) => Promise<unknown>)({ index: 1, tabId: 42 }, exec)
+    expect(requestTool).toHaveBeenLastCalledWith('browser_click', { index: 1, tabId: 42 }, exec.signal, 1_000)
+  })
+
+  it('exposes optional tabId on page tools and forwards it in bridge requests', async () => {
+    const { ctx, bridge, requestTool, registered } = makeHarness()
+    registerBrowserTools(ctx, bridge, { toolTimeoutMs: 1_000, snapshotMaxChars: 12_000, maxInteractiveItems: 60 })
+    const schemaProps = (name: string): Record<string, unknown> => {
+      const parameters = registered.find((r) => r.name === name)!.definition.parameters as {
+        properties?: Record<string, unknown>
+      }
+      return parameters.properties ?? {}
+    }
+    expect(schemaProps('browser_click').tabId).toBeDefined()
+    expect(schemaProps('browser_snapshot').tabId).toBeDefined()
+    expect(schemaProps('browser_list_tabs').tabId).toBeUndefined()
+
+    const snapTool = registered.find((r) => r.name === 'browser_snapshot')!
+    const exec = { signal: new AbortController().signal }
+    await (snapTool.definition.execute as (args: unknown, e: { signal: AbortSignal }) => Promise<unknown>)({ tabId: 99, delta: true }, exec)
+    expect(requestTool).toHaveBeenLastCalledWith('browser_snapshot', { delta: true, tabId: 99 }, exec.signal, 1_000)
   })
 
   it('associates browser calls with the owning Agent session', async () => {

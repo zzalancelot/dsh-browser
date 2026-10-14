@@ -19,7 +19,7 @@ import {
 } from './frames.ts'
 import { wrapUntrustedContent } from '../security/untrusted.ts'
 import { approvalPromptForCall, originFromUrl } from './authorization.ts'
-import { waitForNextDocumentReady } from './navigation.ts'
+import { waitForNextDocumentReady, waitForTabStatusComplete } from './navigation.ts'
 import type { ApprovalAuthorization, ApprovalPrompt } from '../security/approval.ts'
 import { getUiLocale } from '../i18n.ts'
 
@@ -99,6 +99,8 @@ export const TAB_MANAGEMENT_TOOL_NAMES = new Set([
   'browser_close_tab',
 ])
 const NAVIGATION_SNAPSHOT_GUIDANCE = 'Navigation completed and the current page snapshot is included below. Use it directly instead of taking an immediate duplicate snapshot.'
+const CONTENT_SCRIPT_DISPATCH_ATTEMPTS = 3
+const CONTENT_SCRIPT_RETRY_BACKOFF_MS = [50, 150, 300] as const
 const pendingInjections = new Map<number, Promise<void>>()
 const snapshotDocumentsByTab = new Map<number, Map<number, string>>()
 
@@ -196,7 +198,38 @@ async function sendAction(
 }
 
 function contentScriptReceiverMissing(error: unknown): boolean {
-  return error instanceof Error && error.message.includes('Receiving end does not exist')
+  if (!(error instanceof Error)) return false
+  const message = error.message
+  if (message.includes('message port closed')) return false
+  return message.includes('Receiving end does not exist')
+    || message.includes('Could not establish connection')
+    || message.includes('No receiving end')
+}
+
+async function pingContentScript(tabId: number): Promise<boolean> {
+  try {
+    await chrome.tabs.sendMessage(tabId, { type: 'DSH_BUDGET', budget: {} }, { frameId: 0 })
+    return true
+  } catch (error: unknown) {
+    return !contentScriptReceiverMissing(error)
+  }
+}
+
+/** Wait for tab load completion and inject the content script before page tools run. */
+export async function prepareTabForPageTools(
+  tabId: number,
+  url: string | undefined,
+  signal?: AbortSignal,
+): Promise<boolean> {
+  if (!isInjectablePage(url)) return true
+  if (!(await waitForTabStatusComplete(tabId, signal))) return false
+  if (await pingContentScript(tabId)) return true
+  try {
+    await injectContentScript(tabId)
+  } catch {
+    return false
+  }
+  return pingContentScript(tabId)
 }
 
 function unavailable(message: string): ToolAnswer {
@@ -443,7 +476,7 @@ function isCancelled(call: ToolCall, signal: AbortSignal | undefined): boolean {
 }
 
 function withoutFrame(args: Record<string, unknown>): Record<string, unknown> {
-  const { frame: _frame, ...rest } = args
+  const { frame: _frame, tabId: _tabId, ...rest } = args
   return rest
 }
 
@@ -661,9 +694,15 @@ async function dispatchOnce(
   }
 }
 
-function requestedTabId(args: Record<string, unknown>): number | undefined {
+/** Optional page-tool target from `browser_list_tabs`; omitted means session controlled tab. */
+export function requestedTabId(args: Record<string, unknown>): number | undefined {
   const value = args.tabId
-  return typeof value === 'number' && Number.isSafeInteger(value) && value >= 0 ? value : undefined
+  if (typeof value === 'number' && Number.isSafeInteger(value) && value >= 0) return value
+  if (typeof value === 'string' && /^\d+$/.test(value)) {
+    const parsed = Number(value)
+    if (Number.isSafeInteger(parsed) && parsed >= 0) return parsed
+  }
+  return undefined
 }
 
 /** Whether follow should also bring the tab to the front. Defaults to true. */
@@ -938,65 +977,17 @@ export async function dispatchToolCall(
     return await dispatchTabNativeTool(tab.id, tab.url, tab.title, tab.windowId, call, effectiveBudget, signal, targetStillAllowed, tabManagement.commitAction)
       ?? unavailable('The current page DOM is protected by the browser.')
   }
-  try {
-    return await dispatchOnce(
-      tab.id,
-      executionFrames,
-      call,
-      effectiveBudget,
-      signal,
-      targetStillAllowed,
-      tabManagement.unrestrictedAccess || sharePageContent === 'auto',
-      tabManagement.commitAction,
-      tabManagement.rollbackActionCommit,
-      tabManagement.contentPolicy,
-    )
-  } catch (error: unknown) {
-    if (isCancelled(call, signal)) return cancelled()
-    if (!contentScriptReceiverMissing(error)) {
-      return unavailable('The content script stopped responding after the operation was dispatched. Call browser_snapshot before continuing.')
-    }
-    // Manifest content scripts do not run retroactively in tabs that were
-    // already open when an unpacked extension was installed or reloaded.
-    // Recover in place so the user never has to refresh and lose page state.
-    try {
-      await injectContentScript(tab.id)
-    } catch {
-      return await dispatchTabNativeTool(tab.id, tab.url, tab.title, tab.windowId, call, effectiveBudget, signal, targetStillAllowed, tabManagement.commitAction)
-        ?? unavailable('The content script could not be loaded on this page. Its DOM does not support browser operations.')
-    }
-    try {
-      if (isCancelled(call, signal)) return cancelled()
-      if (targetStillAllowed?.() === false) return targetChanged()
-      const refreshedFrames = await listTabFrames(tab.id, tab.url)
-      if (isCancelled(call, signal)) return cancelled()
-      if (targetStillAllowed?.() === false) return targetChanged()
-      const refreshedTargetError = validateElementTarget(call, tab.id, refreshedFrames)
-      if (refreshedTargetError !== undefined) return refreshedTargetError
-      if (approval !== undefined) {
-        const refreshedApproval = approvalPromptForCall(call, sharePageContent, refreshedFrames)
-        if (refreshedApproval === undefined
-          || !sameApprovalBoundary(approval, refreshedApproval)
-          || (approval.kind === 'action' && !sameTargetDocument(call, executionFrames, refreshedFrames))) {
-          return unavailable('The page changed while the content script was loading. Call browser_snapshot again before retrying.')
-        }
-      }
-      return await dispatchOnce(
-        tab.id,
-        refreshedFrames,
-        call,
-        effectiveBudget,
-        signal,
-        targetStillAllowed,
-        tabManagement.unrestrictedAccess || sharePageContent === 'auto',
-        tabManagement.commitAction,
-        tabManagement.rollbackActionCommit,
-        tabManagement.contentPolicy,
-      )
-    } catch {
-      return unavailable('The content script did not answer after it was loaded. Call browser_snapshot again before retrying.')
-    }
-  }
+  return dispatchInjectableToolCall(
+    tab,
+    executionFrames,
+    call,
+    effectiveBudget,
+    sharePageContent,
+    approval,
+    signal,
+    targetStillAllowed,
+    tabManagement,
+  )
 }
 
 function validateFrameTarget(call: ToolCall, frames: TabFrame[]): ToolAnswer | undefined {
@@ -1034,6 +1025,81 @@ function sameTargetDocument(call: ToolCall, before: TabFrame[], after: TabFrame[
   return beforeFrame !== undefined
     && afterFrame !== undefined
     && frameDocumentKey(beforeFrame) === frameDocumentKey(afterFrame)
+}
+
+async function dispatchInjectableToolCall(
+  tab: Pick<chrome.tabs.Tab, 'id' | 'url' | 'title' | 'windowId'>,
+  executionFrames: TabFrame[],
+  call: ToolCall,
+  effectiveBudget: ContentBudget,
+  sharePageContent: 'ask' | 'auto' | 'off',
+  approval: ApprovalPrompt | undefined,
+  signal: AbortSignal | undefined,
+  targetStillAllowed: (() => boolean) | undefined,
+  tabManagement: TabManagementContext,
+): Promise<ToolAnswer> {
+  if (tab.id === undefined) {
+    return { ok: false, error: { code: 'no-active-tab', message: 'No active tab is available for browser operations.' } }
+  }
+  const tabId = tab.id
+  let frames = executionFrames
+  for (let attempt = 0; attempt < CONTENT_SCRIPT_DISPATCH_ATTEMPTS; attempt += 1) {
+    if (attempt > 0) {
+      await sleep(CONTENT_SCRIPT_RETRY_BACKOFF_MS[attempt - 1] ?? 300)
+    }
+    const prepared = await prepareTabForPageTools(tabId, tab.url, signal)
+    if (!prepared) {
+      if (isCancelled(call, signal)) return cancelled()
+      const native = await dispatchTabNativeTool(tabId, tab.url, tab.title, tab.windowId, call, effectiveBudget, signal, targetStillAllowed, tabManagement.commitAction)
+      if (native !== undefined) return native
+      return unavailable('The page is still loading. Call browser_snapshot again in a moment.')
+    }
+    if (attempt > 0) {
+      if (isCancelled(call, signal)) return cancelled()
+      if (targetStillAllowed?.() === false) return targetChanged()
+      frames = await listTabFrames(tabId, tab.url)
+      if (isCancelled(call, signal)) return cancelled()
+      if (targetStillAllowed?.() === false) return targetChanged()
+      const refreshedTargetError = validateElementTarget(call, tabId, frames)
+      if (refreshedTargetError !== undefined) return refreshedTargetError
+      if (approval !== undefined) {
+        const refreshedApproval = approvalPromptForCall(call, sharePageContent, frames)
+        if (refreshedApproval === undefined
+          || !sameApprovalBoundary(approval, refreshedApproval)
+          || (approval.kind === 'action' && !sameTargetDocument(call, executionFrames, frames))) {
+          return unavailable('The page changed while the content script was loading. Call browser_snapshot again before retrying.')
+        }
+      }
+    }
+    try {
+      return await dispatchOnce(
+        tabId,
+        frames,
+        call,
+        effectiveBudget,
+        signal,
+        targetStillAllowed,
+        tabManagement.unrestrictedAccess || sharePageContent === 'auto',
+        tabManagement.commitAction,
+        tabManagement.rollbackActionCommit,
+        tabManagement.contentPolicy,
+      )
+    } catch (error: unknown) {
+      if (isCancelled(call, signal)) return cancelled()
+      if (!contentScriptReceiverMissing(error)) {
+        return unavailable('The content script stopped responding after the operation was dispatched. Call browser_snapshot before continuing.')
+      }
+      // Manifest content scripts do not run retroactively in tabs that were
+      // already open when an unpacked extension was installed or reloaded.
+      try {
+        await injectContentScript(tabId)
+      } catch {
+        return await dispatchTabNativeTool(tabId, tab.url, tab.title, tab.windowId, call, effectiveBudget, signal, targetStillAllowed, tabManagement.commitAction)
+          ?? unavailable('The content script could not be loaded on this page. Its DOM does not support browser operations.')
+      }
+    }
+  }
+  return unavailable('The content script did not answer after it was loaded. Call browser_snapshot again before retrying.')
 }
 
 /** Parse a model-supplied http(s) URL for tab creation / navigation. */
@@ -1127,6 +1193,12 @@ export async function dispatchOpenTab(
   }
 
   const ready = await navigationWait.ready
+  const loadComplete = await waitForTabStatusComplete(tabId, signal)
+  try {
+    await injectContentScript(tabId)
+  } catch {
+    // Snapshot and later tools may still recover via on-demand injection.
+  }
   if (isCancelled(call, signal)) {
     await removeCreatedTab(tabId)
     return cancelled()
@@ -1147,7 +1219,7 @@ export async function dispatchOpenTab(
   const status = active
     ? `Opened a new tab at ${parsed.href}.`
     : `Opened a new background tab at ${parsed.href}.`
-  if (!ready || sharePageContent === 'off' || isCancelled(call, signal)) {
+  if (!ready || !loadComplete || sharePageContent === 'off' || isCancelled(call, signal)) {
     return {
       ok: true,
       result: {
@@ -1159,6 +1231,7 @@ export async function dispatchOpenTab(
   }
 
   try {
+    await prepareTabForPageTools(tabId, parsed.href, signal)
     const snapshot = await snapshotAfterNavigation(
       tabId,
       call,

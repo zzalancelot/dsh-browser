@@ -8,6 +8,9 @@
 /** Default ceiling for replacing a model-driven snapshot round trip. */
 const NAVIGATION_READY_TIMEOUT_MS = 8_000
 
+/** Default ceiling for a tab's `status === 'complete'` before page tools run. */
+export const TAB_STATUS_COMPLETE_TIMEOUT_MS = 15_000
+
 /** A cancellable wait for the next content-script document in one frame. */
 export interface NavigationWait {
   ready: Promise<boolean>
@@ -61,4 +64,35 @@ export function waitForNextDocumentReady(
   })
 
   return { ready, cancel: () => { finish(false) } }
+}
+
+function tabStatusComplete(status: string | undefined): boolean {
+  return status === undefined || status === 'complete'
+}
+
+const TAB_STATUS_POLL_MS = 50
+
+/**
+ * Wait until Chrome reports the tab load finished, or time out.
+ * Returns false when the tab disappears or the wait is aborted.
+ */
+export async function waitForTabStatusComplete(
+  tabId: number,
+  signal?: AbortSignal,
+  timeoutMs: number = TAB_STATUS_COMPLETE_TIMEOUT_MS,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs
+  while (Date.now() < deadline) {
+    if (signal?.aborted === true) return false
+    try {
+      const tab = await chrome.tabs.get(tabId)
+      if (tabStatusComplete(tab.status)) return true
+    } catch {
+      return false
+    }
+    await new Promise<void>((resolve) => {
+      setTimeout(resolve, TAB_STATUS_POLL_MS)
+    })
+  }
+  return false
 }

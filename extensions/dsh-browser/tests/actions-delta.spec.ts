@@ -43,7 +43,7 @@ describe('automatic action deltas', () => {
       budget: BUDGET,
       includePageDelta: true,
     })
-    await vi.advanceTimersByTimeAsync(100)
+    await vi.advanceTimersByTimeAsync(300)
 
     await expect(pending).resolves.toMatchObject({
       text: expect.stringContaining('Clicked'),
@@ -87,7 +87,7 @@ describe('automatic action deltas', () => {
       budget: BUDGET,
       includePageDelta: false,
     })
-    await vi.advanceTimersByTimeAsync(100)
+    await vi.advanceTimersByTimeAsync(300)
 
     await expect(pending).resolves.toEqual({ text: expect.stringContaining('Clicked') })
   })

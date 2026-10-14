@@ -3,6 +3,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import {
   dispatchToolCall,
   isNavigationCandidateTool,
+  requestedTabId,
   type ToolAnswer,
   type ToolCall,
 } from '../src/background/tools.ts'
@@ -23,6 +24,7 @@ function managedTab(tabId: number, overrides: Partial<chrome.tabs.Tab> = {}): ch
     discarded: false,
     autoDiscardable: true,
     groupId: -1,
+    status: 'complete',
     url: `https://example.com/${tabId}`,
     title: `Tab ${tabId}`,
     ...overrides,
@@ -45,6 +47,17 @@ function mockChrome(options: {
     documentId: `document-${options.tab.id}`,
     url: options.tab.url ?? '',
   }])
+  const defaultRespond = (message: unknown, frameId: number): unknown => {
+    if ((message as { type?: unknown }).type === 'DSH_BUDGET') {
+      const peek = responses[0]
+      if (peek instanceof Error) {
+        responses.shift()
+        throw peek
+      }
+      return { ok: true, result: { text: 'budget ok' } }
+    }
+    return options.respond?.(message, frameId) ?? responses.shift()
+  }
   const sendMessage = vi.fn(async (
     _tabId: number,
     message: unknown,
@@ -53,7 +66,7 @@ function mockChrome(options: {
     const targetFrameId = target?.frameId
       ?? currentFrames().find((frame) => frame.documentId === target?.documentId)?.frameId
       ?? 0
-    const response = options.respond?.(message, targetFrameId) ?? responses.shift()
+    const response = defaultRespond(message, targetFrameId)
     if (response instanceof Error) throw response
     return response
   })
@@ -64,10 +77,11 @@ function mockChrome(options: {
   const query = vi.fn(async (queryInfo?: chrome.tabs.QueryInfo) => Object.keys(queryInfo ?? {}).length === 0
     ? allTabs()
     : (options.tab === undefined ? [] : [options.tab]))
+  const tabUpdatedListeners = new Set<(tabId: number, changeInfo: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab) => void>()
   const get = vi.fn(async (tabId: number) => {
     const found = allTabs().find((tab) => tab.id === tabId)
     if (found === undefined) throw new Error(`No tab with id: ${tabId}`)
-    return { ...found }
+    return { status: 'complete', ...found }
   })
   const update = vi.fn(async (_tabId: number, changes: chrome.tabs.UpdateProperties) => ({ ...options.tab, ...changes }))
   const goBack = vi.fn(async () => undefined)
@@ -78,8 +92,29 @@ function mockChrome(options: {
   const windowsUpdate = vi.fn(async (windowId: number, updateInfo: chrome.windows.UpdateInfo) => ({ id: windowId, ...updateInfo }))
   const captureVisibleTab = vi.fn(async () => 'data:image/png;base64,iVBORw0KGgo=')
   const getCurrentWindow = vi.fn(async () => ({ id: options.tab?.windowId ?? 1 }))
+  const emitTabUpdated = (tabId: number, changeInfo: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab): void => {
+    for (const listener of tabUpdatedListeners) listener(tabId, changeInfo, tab)
+  }
   vi.stubGlobal('chrome', {
-    tabs: { query, get, sendMessage, update, goBack, goForward, reload, remove, captureVisibleTab },
+    tabs: {
+      query,
+      get,
+      sendMessage,
+      update,
+      goBack,
+      goForward,
+      reload,
+      remove,
+      captureVisibleTab,
+      onUpdated: {
+        addListener: (listener: (tabId: number, changeInfo: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab) => void) => {
+          tabUpdatedListeners.add(listener)
+        },
+        removeListener: (listener: (tabId: number, changeInfo: chrome.tabs.TabChangeInfo, tab: chrome.tabs.Tab) => void) => {
+          tabUpdatedListeners.delete(listener)
+        },
+      },
+    },
     scripting: { executeScript },
     webNavigation: { getAllFrames },
     windows: { update: windowsUpdate, getCurrent: getCurrentWindow },
@@ -102,6 +137,7 @@ function mockChrome(options: {
   return {
     captureVisibleTab,
     emitContentReady,
+    emitTabUpdated,
     executeScript,
     get,
     getAllFrames,
@@ -122,6 +158,17 @@ afterEach(() => {
   vi.restoreAllMocks()
 })
 
+describe('requestedTabId', () => {
+  it('accepts non-negative safe integers only', () => {
+    expect(requestedTabId({ tabId: 12 })).toBe(12)
+    expect(requestedTabId({ tabId: '88' })).toBe(88)
+    expect(requestedTabId({})).toBeUndefined()
+    expect(requestedTabId({ tabId: -1 })).toBeUndefined()
+    expect(requestedTabId({ tabId: 1.5 })).toBeUndefined()
+    expect(requestedTabId({ tabId: '12.5' })).toBeUndefined()
+  })
+})
+
 describe('isNavigationCandidateTool', () => {
   it('classifies only tools that may change the page checkpoint', () => {
     expect(isNavigationCandidateTool('browser_click')).toBe(true)
@@ -140,8 +187,99 @@ describe('dispatchToolCall', () => {
     expect(answer.ok).toBe(true)
     expect((answer.result as { text: string }).text).toContain('page')
     expect((answer.result as { text: string }).text).toContain('UNTRUSTED_PAGE_CONTENT')
-    expect(chromeMock.sendMessage).toHaveBeenCalledTimes(1)
+    expect(chromeMock.sendMessage).toHaveBeenCalledTimes(2)
     expect(chromeMock.executeScript).not.toHaveBeenCalled()
+  })
+
+  it('waits for tab load completion before snapshotting an explicit tabId', async () => {
+    vi.useFakeTimers()
+    const loadingTab = managedTab(88, { url: 'https://fresh.example/', status: 'loading' })
+    const chromeMock = mockChrome({
+      tab: managedTab(7, { url: 'https://controlled.example/' }),
+      tabs: [managedTab(7), loadingTab],
+      respond: () => ({ ok: true, result: { text: 'FRESH TAB PAGE' } }),
+    })
+    chromeMock.get.mockImplementation(async (tabId: number) => {
+      const found = [managedTab(7), loadingTab].find((tab) => tab.id === tabId)
+      if (found === undefined) throw new Error(`No tab with id: ${tabId}`)
+      return { ...found }
+    })
+
+    const dispatch = dispatchToolCall(
+      { id: 'snap-loading', name: 'browser_snapshot', args: { tabId: 88 } },
+      'auto',
+      undefined,
+      undefined,
+      undefined,
+      loadingTab,
+      undefined,
+      { unrestrictedAccess: true },
+    )
+    await Promise.resolve()
+    expect(chromeMock.sendMessage).not.toHaveBeenCalled()
+
+    chromeMock.get.mockImplementation(async (tabId: number) => {
+      const found = [managedTab(7), { ...loadingTab, status: 'complete' as const }].find((tab) => tab.id === tabId)
+      if (found === undefined) throw new Error(`No tab with id: ${tabId}`)
+      return { ...found }
+    })
+    await vi.advanceTimersByTimeAsync(60)
+    const answer = await dispatch
+    vi.useRealTimers()
+
+    expect(answer.ok).toBe(true)
+    expect((answer.result as { text: string }).text).toContain('FRESH TAB PAGE')
+    expect(chromeMock.sendMessage).toHaveBeenCalled()
+  })
+
+  it('snapshots the resolved target tab when args include tabId', async () => {
+    const explicitTarget = managedTab(88, { url: 'https://other.example/' })
+    const chromeMock = mockChrome({
+      tab: managedTab(7, { url: 'https://controlled.example/' }),
+      tabs: [managedTab(7), explicitTarget],
+      frames: [{ frameId: 0, parentFrameId: -1, documentId: 'other-doc', url: 'https://other.example/' }],
+      respond: () => ({ ok: true, result: { text: 'OTHER TAB PAGE' } }),
+    })
+
+    const answer = await dispatchToolCall(
+      { id: 'snap-tab', name: 'browser_snapshot', args: { tabId: 88 } },
+      'auto',
+      undefined,
+      undefined,
+      undefined,
+      explicitTarget,
+      undefined,
+      { unrestrictedAccess: true },
+    )
+
+    expect(answer.ok).toBe(true)
+    expect((answer.result as { text: string }).text).toContain('OTHER TAB PAGE')
+    expect(chromeMock.sendMessage).toHaveBeenCalledWith(88, expect.any(Object), expect.any(Object))
+  })
+
+  it('strips tabId from args before sending to the content script', async () => {
+    const chromeMock = mockChrome({ tab: { id: 7, url: 'https://example.com' } })
+
+    await dispatchToolCall(
+      { id: 'explicit-tab', name: 'browser_press', args: { key: 'Enter', tabId: 99 } },
+      'auto',
+      undefined,
+      undefined,
+      undefined,
+      { id: 7, url: 'https://example.com' },
+      undefined,
+      { unrestrictedAccess: true },
+    )
+
+    expect(chromeMock.sendMessage).toHaveBeenCalledWith(
+      7,
+      expect.objectContaining({
+        type: 'DSH_ACTION',
+        action: 'browser_press',
+        args: { key: 'Enter' },
+      }),
+      expect.anything(),
+    )
   })
 
   it('injects content.js and retries for a page opened before extension load', async () => {
@@ -158,7 +296,7 @@ describe('dispatchToolCall', () => {
       target: { tabId: 7, allFrames: true },
       files: ['content.js'],
     })
-    expect(chromeMock.sendMessage).toHaveBeenCalledTimes(2)
+    expect(chromeMock.sendMessage).toHaveBeenCalledTimes(3)
     expect(chromeMock.sendMessage).toHaveBeenLastCalledWith(7, {
       type: 'DSH_ACTION',
       action: 'browser_snapshot',
@@ -170,7 +308,12 @@ describe('dispatchToolCall', () => {
   it('does not retry or roll back a dispatched action when its response port closes', async () => {
     const chromeMock = mockChrome({
       tab: { id: 7, url: 'https://example.com/form' },
-      responses: [new Error('The message port closed before a response was received.')],
+      respond: (message) => {
+        if ((message as { type?: unknown }).type === 'DSH_BUDGET') {
+          return { ok: true, result: { text: 'budget ok' } }
+        }
+        throw new Error('The message port closed before a response was received.')
+      },
     })
     const commitAction = vi.fn()
     const rollbackActionCommit = vi.fn()
@@ -192,7 +335,7 @@ describe('dispatchToolCall', () => {
     })
     expect(commitAction).toHaveBeenCalledOnce()
     expect(rollbackActionCommit).not.toHaveBeenCalled()
-    expect(chromeMock.sendMessage).toHaveBeenCalledOnce()
+    expect(chromeMock.sendMessage).toHaveBeenCalledTimes(2)
     expect(chromeMock.executeScript).not.toHaveBeenCalled()
   })
 
@@ -471,8 +614,10 @@ describe('dispatchToolCall', () => {
   })
 
   it('dispatches to an explicitly bound background tab without querying the active tab', async () => {
+    const boundTarget = managedTab(88, { url: 'https://bound.example/' })
     const chromeMock = mockChrome({
-      tab: { id: 7, url: 'https://active.example/' },
+      tab: managedTab(7, { url: 'https://active.example/' }),
+      tabs: [managedTab(7), boundTarget],
       frames: [{ frameId: 0, parentFrameId: -1, documentId: 'bound-doc', url: 'https://bound.example/' }],
     })
 
@@ -482,7 +627,7 @@ describe('dispatchToolCall', () => {
       undefined,
       undefined,
       undefined,
-      { id: 88, url: 'https://bound.example/' },
+      boundTarget,
     )
 
     expect(answer.ok).toBe(true)
@@ -508,6 +653,7 @@ describe('dispatchToolCall', () => {
     expect(text).toContain('iframe frame=4 parent=0 origin=https://login.example.net')
     expect(text).toContain('IFRAME SNAPSHOT')
     expect(chromeMock.sendMessage.mock.calls.map((call) => call[2])).toEqual([
+      { frameId: 0 },
       { documentId: 'top-doc' },
       { documentId: 'child-doc' },
     ])
@@ -640,7 +786,7 @@ describe('dispatchToolCall', () => {
       budget,
       async () => 'approved',
     )
-    await vi.waitFor(() => { expect(chromeMock.sendMessage).toHaveBeenCalledTimes(1) })
+    await vi.waitFor(() => { expect(chromeMock.sendMessage).toHaveBeenCalledTimes(2) })
     frames[0] = {
       frameId: 0,
       parentFrameId: -1,
@@ -656,7 +802,7 @@ describe('dispatchToolCall', () => {
     expect(text).toContain('UNTRUSTED_PAGE_CONTENT')
     expect(text).not.toContain('Call browser_snapshot again')
     expect(text.length).toBeLessThanOrEqual(budget.maxChars)
-    expect(chromeMock.sendMessage).toHaveBeenCalledTimes(2)
+    expect(chromeMock.sendMessage).toHaveBeenCalledTimes(3)
     expect(chromeMock.sendMessage).toHaveBeenLastCalledWith(35, expect.objectContaining({
       action: 'browser_snapshot',
       args: { delta: false },
@@ -687,7 +833,7 @@ describe('dispatchToolCall', () => {
       ok: true,
       result: { text: expect.stringContaining('Call browser_snapshot again') },
     })
-    expect(chromeMock.sendMessage).toHaveBeenCalledTimes(1)
+    expect(chromeMock.sendMessage).toHaveBeenCalledTimes(2)
   })
 
   it('wraps browser_get_text output in the same untrusted-content boundary', async () => {
@@ -928,8 +1074,14 @@ describe('dispatchOpenTab', () => {
     const getAllFrames = vi.fn(async () => [{
       frameId: 0, parentFrameId: -1, documentId: 'doc-42', url: 'https://docs.example/',
     }])
+    const get = vi.fn(async (tabId: number) => ({
+      id: tabId,
+      windowId: 9,
+      url: 'https://docs.example/',
+      status: 'complete' as const,
+    }))
     vi.stubGlobal('chrome', {
-      tabs: { create, update, remove, sendMessage, query: vi.fn(async () => []) },
+      tabs: { create, update, remove, sendMessage, query: vi.fn(async () => []), get },
       scripting: { executeScript: vi.fn(async () => [{ frameId: 0, result: undefined }]) },
       webNavigation: { getAllFrames },
       runtime: {
@@ -1016,8 +1168,14 @@ describe('dispatchOpenTab', () => {
     const getAllFrames = vi.fn(async () => [{
       frameId: 0, parentFrameId: -1, documentId: 'doc-42', url: 'https://docs.example/',
     }])
+    const get = vi.fn(async (tabId: number) => ({
+      id: tabId,
+      windowId: 9,
+      url: 'https://docs.example/',
+      status: 'complete' as const,
+    }))
     vi.stubGlobal('chrome', {
-      tabs: { create, update, remove, sendMessage, query: vi.fn(async () => []) },
+      tabs: { create, update, remove, sendMessage, query: vi.fn(async () => []), get },
       scripting: { executeScript: vi.fn(async () => [{ frameId: 0, result: undefined }]) },
       webNavigation: { getAllFrames },
       runtime: {
@@ -1161,8 +1319,14 @@ describe('dispatchOpenTab', () => {
     const getAllFrames = vi.fn(async () => [{
       frameId: 0, parentFrameId: -1, documentId: 'doc-77', url: 'https://docs.example/',
     }])
+    const get = vi.fn(async (tabId: number) => ({
+      id: tabId,
+      windowId: 9,
+      url: 'https://docs.example/',
+      status: 'complete' as const,
+    }))
     vi.stubGlobal('chrome', {
-      tabs: { create, update, remove, sendMessage, query: vi.fn(async () => []) },
+      tabs: { create, update, remove, sendMessage, query: vi.fn(async () => []), get },
       scripting: { executeScript: vi.fn(async () => [{ frameId: 0, result: undefined }]) },
       webNavigation: { getAllFrames },
       runtime: {

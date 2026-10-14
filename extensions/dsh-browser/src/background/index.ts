@@ -56,6 +56,7 @@ import {
   injectContentScript,
   isNavigationCandidateTool,
   isTabManagementTool,
+  requestedTabId,
   resetTabSnapshot,
   type ToolAnswer,
   type ToolCall,
@@ -1129,6 +1130,44 @@ function commitTabAffinityRebind(
   broadcastTabAffinity()
 }
 
+type PageToolTarget = Pick<chrome.tabs.Tab, 'id' | 'url' | 'title' | 'windowId'>
+
+/** Session controlled tab, or one explicit tabId without rebinding affinity. */
+async function resolvePageToolTarget(
+  call: ToolCall,
+): Promise<{ target: PageToolTarget; targetStillAllowed?: () => boolean } | ToolAnswer> {
+  const explicitTabId = requestedTabId(call.args)
+  if (explicitTabId !== undefined) {
+    try {
+      const tab = await chrome.tabs.get(explicitTabId)
+      if (tab.id === undefined) {
+        return {
+          ok: false,
+          error: {
+            code: 'action-failed',
+            message: `Tab ${explicitTabId} is no longer open. Call browser_list_tabs again.`,
+          },
+        }
+      }
+      return { target: tab }
+    } catch {
+      return {
+        ok: false,
+        error: {
+          code: 'action-failed',
+          message: `Tab ${explicitTabId} is no longer open. Call browser_list_tabs again.`,
+        },
+      }
+    }
+  }
+  const target = await resolveToolTab(call.sessionId)
+  if ('ok' in target) return target
+  return {
+    target,
+    targetStillAllowed: () => target.id !== undefined && tabAffinity.allowsTarget(target.id, call.sessionId),
+  }
+}
+
 async function followModelSelectedTab(
   tab: chrome.tabs.Tab,
   sessionId?: string,
@@ -1243,16 +1282,22 @@ function routeToolCall(call: ToolCall): void {
           (tabId) => tabAffinity.allowsTarget(tabId, call.sessionId),
           commitAction,
         ))
-    : resolveToolTab(call.sessionId).then((target) => 'ok' in target
-      ? target
+    : resolvePageToolTarget(call).then((resolved) => 'ok' in resolved
+      ? resolved
       : dispatchToolCall(
           call,
           sharePageContent,
           budget,
-          (prompt) => authorizeToolCall(prompt, controller.signal, target.windowId, call.sessionId, unrestrictedAccess),
+          (prompt) => authorizeToolCall(
+            prompt,
+            controller.signal,
+            resolved.target.windowId ?? 0,
+            call.sessionId,
+            unrestrictedAccess,
+          ),
           controller.signal,
-          target,
-          () => target.id !== undefined && tabAffinity.allowsTarget(target.id, call.sessionId),
+          resolved.target,
+          resolved.targetStillAllowed,
           {
             unrestrictedAccess,
             screenshotEnhancement: settings.screenshotEnhancement,
