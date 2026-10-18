@@ -107,6 +107,32 @@ describe('dsh 0.2 Remote Host adapter', () => {
     expect(open.mock.calls[0]?.[3]).toBe(expectedPeer)
     expect(open.mock.calls[0]?.[4]).toBeInstanceOf(AbortSignal)
   })
+
+  it('still mounts when Connection has no createPeer (dsh 0.2.0-rc.x)', async () => {
+    const open = vi.fn(async (_endpoint: string, _payload: unknown, _uplink: unknown, peer: unknown, signal: AbortSignal) => {
+      expect(peer).toMatchObject({ principal: { kind: 'owner' }, interactions: 'answer' })
+      return { async *[Symbol.asyncIterator]() { yield { type: 'ready', clientId: 'legacy', host: {} }; await abortWait(signal) } }
+    })
+    const gateway: TypertGatewayLike = {
+      invoke: vi.fn(async () => ({})),
+      wireStream: {
+        open,
+        failure: (error: unknown) => ({ code: 'internal', message: String(error), details: {} }),
+      },
+    }
+    const connection: HostConnectionLike = {
+      createSharedFetchHandler: () => ({
+        fetch: async () => new Response('not found', { status: 404 }),
+      }),
+    }
+    const api = createRemoteHostApi(gateway, connection)
+    const controller = new AbortController()
+    const iterator = api.events(controller.signal)[Symbol.asyncIterator]()
+    const pending = iterator.next()
+    await vi.waitFor(() => expect(open).toHaveBeenCalled())
+    controller.abort()
+    await pending.catch(() => undefined)
+  })
   it('preserves V3 durable streams and orders reconnect baselines before transient frames without advancing the durable cursor', async () => {
     const baseline = {
       revision: 2,

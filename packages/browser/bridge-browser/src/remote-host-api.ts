@@ -104,8 +104,29 @@ export interface HostConnectionLike {
     /** dsh 0.2.1+: peer is required; older stubs may ignore the second arg. */
     fetch(request: Request, peer?: HostPeerLike): Promise<Response>
   }
-  /** dsh 0.2.1+: mint an in-process Peer for Gateway / shared-fetch calls. */
-  createPeer(options: HostPeerCreateOptions): HostPeerLike
+  /**
+   * dsh 0.2.1+: mint an in-process Peer for Gateway / shared-fetch calls.
+   * Optional so 0.2.0-rc.x Hosts (no createPeer) still load; those get a
+   * local stand-in Peer below.
+   */
+  createPeer?(options: HostPeerCreateOptions): HostPeerLike
+}
+
+/** Owner Peer for Gateway calls: real Connection Peer when available. */
+function resolveOwnerPeer(connection: HostConnectionLike): HostPeerLike {
+  if (typeof connection.createPeer === 'function') {
+    return connection.createPeer({
+      principal: { kind: 'owner' },
+      interactions: 'answer',
+    })
+  }
+  // dsh ≤0.2.0-rc.2 Connection has no createPeer; Gateway ignored peer there.
+  // Keep a structural stand-in so call sites can always pass a Peer object.
+  return {
+    signal: new AbortController().signal,
+    principal: { kind: 'owner' },
+    interactions: 'answer',
+  }
 }
 
 interface InvokeTarget {
@@ -152,11 +173,8 @@ class RemoteHostApi implements BrowserHostApi {
   ) {
     this.fetchHandler = connection.createSharedFetchHandler('/api')
     // 0.2.1+ Gateway refuses wireStream/invoke without a live Peer; $events
-    // further requires interactions=answer (Peer default when omitted).
-    this.peer = connection.createPeer({
-      principal: { kind: 'owner' },
-      interactions: 'answer',
-    })
+    // further requires interactions=answer. Older Hosts omit createPeer.
+    this.peer = resolveOwnerPeer(connection)
   }
 
   async call(call: HostRpcCall): Promise<HostRpcResult> {
