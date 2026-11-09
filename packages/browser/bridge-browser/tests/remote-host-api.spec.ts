@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest'
 import {
   createRemoteHostApi,
   type HostConnectionLike,
+  type HostPeerLike,
   type TypertGatewayLike,
 } from '../src/remote-host-api.ts'
 import type { HostRpcCall } from '../src/host-api.ts'
@@ -18,14 +19,14 @@ function abortWait(signal: AbortSignal): Promise<void> {
 function harness(options: {
   invoke?: TypertGatewayLike['invoke']
   open?: TypertGatewayLike['wireStream']['open']
-  fetch?: (request: Request) => Promise<Response>
+  fetch?: (request: Request, peer: HostPeerLike) => Promise<Response>
 } = {}) {
   const invoke = vi.fn(options.invoke ?? (async () => ({ accepted: true })))
   const open = vi.fn(options.open ?? (async (_endpoint, _payload, _uplink, _peer, signal) => ({
     async *[Symbol.asyncIterator]() { await abortWait(signal) },
   })))
   const requestBodies: unknown[] = []
-  const fetch = vi.fn(options.fetch ?? (async (request: Request) => {
+  const fetch = vi.fn(options.fetch ?? (async (request: Request, _peer: HostPeerLike) => {
     const body = await request.clone().json() as { rpcId: string }
     requestBodies.push(body)
     return Response.json({ type: 'server-response', rpcId: body.rpcId, result: { ok: true } })
@@ -228,7 +229,15 @@ describe('dsh 0.2 Remote Host adapter', () => {
   })
 
   it('uses a session/follow snapshot for history and keeps that iterator for live events', async () => {
-    const { api, open } = harness({
+    const message = {
+      type: 'assistant/message', seq: 1, time: 2, surfaceOp: 'append',
+      data: {
+        turn: 0, step: 0,
+        message: { role: 'assistant', content: [{ type: 'text', text: 'Hello!' }] },
+        stream: [{ type: 'text-chunks', time0: 2, index: 0, dt: [2, -1], texts: ['Hel', 'lo', '!'] }],
+      },
+    }
+    const { api, open, peer } = harness({
       open: async (endpoint, _payload, _uplink, _peer, signal) => {
         if (endpoint === '$events') {
           return {
@@ -243,18 +252,10 @@ describe('dsh 0.2 Remote Host adapter', () => {
             async *[Symbol.asyncIterator]() {
               yield {
                 type: 'snapshot',
-                cursor: 3,
+                cursor: 1,
                 records: [
                   { type: 'event', event: { type: 'user/message', seq: 0, time: 1, data: {} } },
-                  {
-                    type: 'chunks',
-                    event: {
-                      type: 'chunkrow/text-chunks',
-                      seq: 1,
-                      time: 2,
-                      data: { turn: 0, step: 0, index: 0, dt: [2, -1], texts: ['Hel', 'lo', '!'] },
-                    },
-                  },
+                  { type: 'event', event: message },
                 ],
                 hasMore: false,
                 projections: { asOfSeq: 1, values: { imageLimits: { maxImageBytes: 10 } } },
@@ -280,24 +281,7 @@ describe('dsh 0.2 Remote Host adapter', () => {
       value: {
         events: [
           { event: { type: 'user/message', seq: 0, time: 1, data: {} } },
-          {
-            event: {
-              type: 'assistant/chunk', seq: 1, time: 2,
-              data: { turn: 0, step: 0, chunk: { type: 'text-delta', index: 0, text: 'Hel' } },
-            },
-          },
-          {
-            event: {
-              type: 'assistant/chunk', seq: 2, time: 4,
-              data: { turn: 0, step: 0, chunk: { type: 'text-delta', index: 0, text: 'lo' } },
-            },
-          },
-          {
-            event: {
-              type: 'assistant/chunk', seq: 3, time: 3,
-              data: { turn: 0, step: 0, chunk: { type: 'text-delta', index: 0, text: '!' } },
-            },
-          },
+          { event: message },
         ],
         hasMore: false,
         projections: { asOfSeq: 1, values: { imageLimits: { maxImageBytes: 10 } } },
@@ -328,7 +312,7 @@ describe('dsh 0.2 Remote Host adapter', () => {
   })
 
   it('forwards tail-page size through a one-shot session/follow snapshot', async () => {
-    const { api, open } = harness({
+    const { api, open, peer } = harness({
       open: async (endpoint) => {
         if (endpoint !== 'session/follow') throw new Error(endpoint)
         return {
@@ -379,7 +363,7 @@ describe('dsh 0.2 Remote Host adapter', () => {
   })
 
   it('pages older history with a Host-legal throughSeq, never MAX_SAFE_INTEGER', async () => {
-    const { api, invoke, open } = harness({
+    const { api, invoke, open, peer } = harness({
       invoke: async ({ namespace, method, args }) => {
         if (`${namespace}/${method}` !== 'session/page') throw new Error(`${namespace}/${method}`)
         expect(args).toEqual({
@@ -564,7 +548,7 @@ describe('dsh 0.2 Remote Host adapter', () => {
   })
 
   it('reads workspace.list from the workspace/follow baseline', async () => {
-    const { api, open } = harness({
+    const { api, open, peer } = harness({
       open: async (endpoint) => ({
         async *[Symbol.asyncIterator]() {
           if (endpoint === 'workspace/follow') {
@@ -583,7 +567,7 @@ describe('dsh 0.2 Remote Host adapter', () => {
 
   it('bridges user questions through $events/result and unwraps the extension answer', async () => {
     let releaseCancel: (() => void) | undefined
-    const { api, fetch } = harness({
+    const { api, fetch, peer } = harness({
       open: async (endpoint, _payload, _uplink, _peer, signal) => {
         if (endpoint === 'session/follow') {
           return {
@@ -643,6 +627,9 @@ describe('dsh 0.2 Remote Host adapter', () => {
 
     const request = fetch.mock.calls[0]?.[0] as Request
     expect(request.url).toBe('http://dsh.internal/api/$events/result')
+    // dsh 0.2.1 dispatches the shared /api handler as an explicit Peer; only
+    // the Peer that opened $events may answer its waterfalls.
+    expect(fetch.mock.calls[0]?.[1]).toBe(peer)
     expect(await request.clone().json()).toMatchObject({
       type: 'client-request',
       method: '$events/result',
@@ -780,5 +767,202 @@ describe('dsh 0.2 Remote Host adapter', () => {
     })
     abort.abort()
     await expect(pending).resolves.toEqual({ done: true, value: undefined })
+  })
+
+  const permissionCatalog = {
+    options: [
+      { value: 'read-only', name: 'Read Only' },
+      { value: 'workspace-write', name: 'Workspace Write', description: 'Write inside the workspace' },
+      { value: 'danger-full-access', name: 'Full access' },
+    ],
+    defaultOptions: [
+      { value: 'read-only', name: 'Read Only' },
+      { value: 'workspace-write', name: 'Workspace Write', description: 'Write inside the workspace' },
+    ],
+    defaultPreset: 'workspace-write',
+  }
+
+  it('combines the process permission catalog with the Session projection', async () => {
+    const { api, invoke } = harness({
+      invoke: async ({ namespace, method }) => {
+        if (`${namespace}/${method}` === 'permissionPresets/catalog') return permissionCatalog
+        if (`${namespace}/${method}` === 'session/projections') {
+          return { asOfSeq: 4, values: { permissions: { currentValue: 'danger-full-access' } } }
+        }
+        throw new Error(`${namespace}/${method}`)
+      },
+    })
+
+    await expect(api.call(call('session.permissions', { sessionId: 'session-1' }))).resolves.toEqual({
+      ok: true,
+      value: {
+        current: 'danger-full-access',
+        routable: true,
+        provisional: false,
+        options: permissionCatalog.options,
+        defaultOptions: permissionCatalog.defaultOptions,
+        defaultPreset: 'workspace-write',
+      },
+    })
+    expect(invoke).toHaveBeenCalledWith(expect.objectContaining({
+      namespace: 'permissionPresets', method: 'catalog', args: {},
+    }))
+    expect(invoke).toHaveBeenCalledWith(expect.objectContaining({
+      namespace: 'session', method: 'projections', args: { request: { sessionId: 'session-1' } },
+    }))
+  })
+
+  it('reports the default preset as not routable when the Host exposes no permission projection', async () => {
+    const { api } = harness({
+      invoke: async ({ namespace, method }) => {
+        if (`${namespace}/${method}` === 'permissionPresets/catalog') return permissionCatalog
+        if (`${namespace}/${method}` === 'session/projections') return { asOfSeq: 2, values: {} }
+        throw new Error(`${namespace}/${method}`)
+      },
+    })
+
+    await expect(api.call(call('session.permissions', { sessionId: 'session-1' }))).resolves.toMatchObject({
+      ok: true,
+      value: { current: 'workspace-write', routable: false, provisional: false },
+    })
+  })
+
+  it('fails closed on a malformed permission catalog', async () => {
+    const { api } = harness({ invoke: async () => ({ options: [], defaultOptions: [] }) })
+
+    await expect(api.call(call('permission.catalog', {}))).resolves.toMatchObject({
+      ok: false,
+      error: { code: 'internal', message: 'permissionPresets.catalog returned no default preset' },
+    })
+  })
+
+  it('switches the Session preset through the Host /permission command', async () => {
+    const { api, invoke } = harness({
+      invoke: async ({ namespace, method, args }) => {
+        if (`${namespace}/${method}` === 'permissionPresets/catalog') return permissionCatalog
+        if (`${namespace}/${method}` === 'commands/execute') {
+          expect(args).toEqual({
+            agentId: 'session-1',
+            line: '/permission danger-full-access',
+            submittedAttachments: [],
+          })
+          return { commandId: 'command-1', result: { kind: 'success', text: 'full access selected' } }
+        }
+        throw new Error(`${namespace}/${method}`)
+      },
+    })
+
+    await expect(api.call(call('session.setPermission', {
+      sessionId: 'session-1', preset: 'danger-full-access',
+    }))).resolves.toEqual({
+      ok: true,
+      value: {
+        preset: 'danger-full-access',
+        commandId: 'command-1',
+        result: { kind: 'success', text: 'full access selected' },
+      },
+    })
+  })
+
+  it('rejects unknown presets before dispatching any command', async () => {
+    const { api, invoke } = harness({
+      invoke: async ({ namespace, method }) => {
+        if (`${namespace}/${method}` === 'permissionPresets/catalog') return permissionCatalog
+        throw new Error(`${namespace}/${method}`)
+      },
+    })
+
+    await expect(api.call(call('session.setPermission', {
+      sessionId: 'session-1', preset: 'custom',
+    }))).resolves.toEqual({
+      ok: false,
+      error: { code: 'bad-request', message: 'unknown permission preset "custom"', details: {} },
+    })
+    expect(invoke).toHaveBeenCalledOnce()
+  })
+
+  it('lists Host commands with their input hint and definition identity', async () => {
+    const { api, invoke } = harness({
+      invoke: async ({ namespace, method, args }) => {
+        if (`${namespace}/${method}` !== 'commands/list') throw new Error(`${namespace}/${method}`)
+        expect(args).toEqual({ agentId: 'session-1' })
+        return [
+          { definitionId: '@deepseek-ai/dsh-command-compact', name: 'compact', description: 'Compact the conversation' },
+          { name: 'permission', description: 'Switch preset', input: { hint: '<preset>' } },
+        ]
+      },
+    })
+
+    await expect(api.call(call('commands.list', { sessionId: 'session-1' }))).resolves.toEqual({
+      ok: true,
+      value: {
+        provisional: false,
+        commands: [
+          { name: 'compact', description: 'Compact the conversation', definitionId: '@deepseek-ai/dsh-command-compact' },
+          { name: 'permission', description: 'Switch preset', hint: '<preset>' },
+        ],
+      },
+    })
+  })
+
+  it('runs one command line and reports an unknown command instead of an empty success', async () => {
+    const { api, invoke } = harness({
+      invoke: async ({ namespace, method, args }) => {
+        if (`${namespace}/${method}` !== 'commands/execute') throw new Error(`${namespace}/${method}`)
+        return args.line === '/compact'
+          ? { commandId: 'command-2', result: { kind: 'error', text: 'Nothing to compact' } }
+          : undefined
+      },
+    })
+
+    await expect(api.call(call('commands.execute', { sessionId: 'session-1', line: '/compact' }))).resolves.toEqual({
+      ok: true,
+      value: { commandId: 'command-2', result: { kind: 'error', text: 'Nothing to compact' } },
+    })
+    expect(invoke).toHaveBeenCalledWith(expect.objectContaining({
+      namespace: 'commands',
+      method: 'execute',
+      args: { agentId: 'session-1', line: '/compact', submittedAttachments: [] },
+    }))
+    await expect(api.call(call('commands.execute', { sessionId: 'session-1', line: '/nope' }))).resolves.toEqual({
+      ok: false,
+      error: { code: 'bad-request', message: 'unknown command line "/nope"', details: {} },
+    })
+    await expect(api.call(call('commands.execute', { sessionId: 'session-1', line: 'hello' }))).resolves.toEqual({
+      ok: false,
+      error: { code: 'bad-request', message: 'commands.execute requires a slash command line', details: {} },
+    })
+  })
+
+  it('lists user-invocable skills for the Session composition', async () => {
+    const { api, invoke } = harness({
+      invoke: async ({ namespace, method, args }) => {
+        if (`${namespace}/${method}` !== 'skills/list') throw new Error(`${namespace}/${method}`)
+        expect(args).toEqual({ request: { sessionId: 'session-1' } })
+        return {
+          skills: [{
+            name: 'office-docx',
+            description: 'Word documents',
+            whenToUse: 'When a DOCX is involved',
+            modelInvocable: false,
+            path: '/skills/office-docx/SKILL.md',
+          }],
+        }
+      },
+    })
+
+    await expect(api.call(call('skills.list', { sessionId: 'session-1' }))).resolves.toEqual({
+      ok: true,
+      value: {
+        provisional: false,
+        skills: [{
+          name: 'office-docx',
+          description: 'Word documents',
+          whenToUse: 'When a DOCX is involved',
+          modelInvocable: false,
+          path: '/skills/office-docx/SKILL.md',
+        }],
+      },
+    })
   })
 })

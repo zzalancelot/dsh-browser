@@ -1,3 +1,6 @@
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs'
+import { tmpdir } from 'node:os'
+import { join } from 'node:path'
 import { describe, expect, it, vi } from 'vitest'
 import type { Context } from '@deepseek-ai/cordis'
 import type { BridgeServer } from '../src/server.ts'
@@ -204,6 +207,7 @@ describe('registerBrowserTools', () => {
       properties: Record<string, unknown>
       required?: string[]
     }
+    // 元素编号和 selector 互斥，由扩展验证实际目标。
     expect(click.properties.index).toBeDefined()
     expect(click.properties.selector).toBeDefined()
     expect(click.properties.text).toBeDefined()

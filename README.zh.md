@@ -11,7 +11,7 @@
 浏览器操作以文本为主：页面会转换为结构化文本和带编号的交互元素清单，模型通过编号定位元素。当文本清单无法描述页面（canvas、验证码、图形或抓取失败）时，在设置中开启**截图增强模式**后，可用 `browser_screenshot` 截取受控标签页作为视觉兜底。dsh 0.1.5 的多模态对话仍走独立通道——宿主声明图片能力时，侧栏也可接收用户主动添加的 PNG、JPEG、WebP 和 GIF。
 
 > [!IMPORTANT]
-> 当前工作区固定使用 dsh 0.2.0-rc.2，也是最低支持版本；不再支持旧版 DSH。
+> 工作区针对最新公开发布的 dsh，目前固定使用 0.2.1-rc.5；不支持旧版 DSH。
 
 ## 快速安装
 
@@ -94,7 +94,7 @@ scripts/install.ps1
 
 ## 详细安装与使用
 
-前置要求：Node.js `^22.19` 或 `>=24`、Corepack/pnpm，以及 Chrome 116+ 或 Firefox 140+。Windows 还需要系统自带的 Windows PowerShell 5.1，或 PowerShell 7+。
+前置要求：Node.js `>=24`、Corepack/pnpm，以及 Chrome 125+ 或 Firefox 140+。Windows 还需要系统自带的 Windows PowerShell 5.1，或 PowerShell 7+。
 
 ### 安装或更新
 
@@ -148,7 +148,7 @@ cd ~/.dsh/dsh-browser && pnpm start
 使用源码 checkout 时，请在仓库根目录运行 `pnpm start`。受支持的精确公开版本为：
 
 ```sh
-npx @deepseek-ai/dsh@0.2.0-rc.2 web
+npx @deepseek-ai/dsh@0.2.1-rc.5 web
 ```
 
 Chrome 本机使用无需配置；Firefox 需要填写上述本地桥 token。打开页面，点击 DeepSeek 鲸鱼图标，等待侧边栏显示**已连接**。已有 HTTP(S) 标签页会在第一次操作时自动加载。在浏览器受保护页面和扩展商店中，模型可以读取标签页元数据，并通过浏览器级能力导航到 HTTP(S)、后退、前进和刷新，但不能读取或操作受保护页面的 DOM。
@@ -159,7 +159,8 @@ Chrome 本机使用无需配置；Firefox 需要填写上述本地桥 token。�
 
 - 确认本机 dsh web 正在运行（默认 `http://127.0.0.1:3080`）。
 - 确认桥接已加载：浏览器打开 `http://127.0.0.1:3080/ext/bridge-config`，应返回类似 `{"wsUrl":"ws://127.0.0.1:3080/ext/bridge"}` 的 JSON。如果返回的是网页而不是 JSON，说明当前运行的 dsh 早于桥接注册——重启 dsh 并刷新页面即可，扩展会自动重连。
-- 扩展会自动探测 3080/3081/3090/14389 端口。若 dsh 运行在其它端口，或使用 `--host 0.0.0.0` 远程部署，请在面板设置中填写地址与桥接 token。Firefox 始终需要 token。
+- 面板打开时探测一次：已填地址优先尝试；回环地址连不上时再自动探测一次（上次成功的地址 → `dsh web` 默认端口 → 插件的固定信标端口 43189–43198）。都没找到时状态显示「未找到服务」，在重新打开面板或点「自动检测」之前不会重试。
+- DSH Desktop 每次启动都会重新随机分配本地 Web 端口，所以桥接插件同时监听一个固定回环信标端口。面板找不到时，打开**设置 → 自动检测**列出本机所有实例，点击其中一条即可填入地址；地址仍可手动填写。远程 `--host` 部署需要手动填写地址和 token；Firefox 始终需要 token。
 
 **远程 `--host 0.0.0.0` / 局域网部署**
 
@@ -195,6 +196,8 @@ pnpm --filter dsh-browser-extension run test
 - `@deepseek-ai/dsh` 与桥接插件的依赖固定在同一条经过验证的公开发布线上；升级时必须同时更新 manifest、锁文件并重跑根目录检查。
 
 `check:runtime` 检查实际解析的 DSH 依赖和锁文件；`test:smoke` 使用临时 DSH home 启动真实 web 宿主，验证桥接和重启后的会话读取，无需模型密钥。CI 在干净安装后运行这些检查。
+
+构建后运行 `pnpm test:browser`，需要已安装 Playwright Chromium，或通过 `CHROMIUM_PATH` 指定支持加载未打包扩展的 Chromium 可执行文件。测试会启动真实 DSH 和 Chromium，验证页面共享、开发者工具授权、输入、iframe 上传与定位，以及 CSS 修改。测试开启并确认跨站 iframe 的进程隔离，覆盖同源、跨源和嵌套 iframe 中的元素点击、输入与滚动。测试无需模型密钥，结果保存在 `.artifacts/browser-smoke/`。
 
 如果遇到 `cache.hydratePrepared is not a function`，更新仓库后重新运行 `pnpm install --frozen-lockfile` 和 `pnpm run build`，再重启 `pnpm start`。无需删除会话数据或清空全局缓存。
 

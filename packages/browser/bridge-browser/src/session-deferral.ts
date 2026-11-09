@@ -12,7 +12,12 @@
  * Provisional sessions also answer `session.models` from the host-wide
  * `session.modelCatalog` (via the Host API adapter, plus a pending switch)
  * and remember `session.selectModel` until materialization, so the composer can
- * show a model switcher before the first message.
+ * show a model switcher before the first message. The permission preset follows
+ * the same shape: `session.permissions` answers from the process catalog plus a
+ * remembered choice, `session.setPermission` records it, and materialization
+ * replays `/permission <preset>` before the first prompt is admitted. Command
+ * and skill directories need a real agent, so a provisional id answers empty
+ * with `provisional: true` instead of materializing on a browse.
  *
  * @module @yuxianglin/dsh-bridge-browser/src/session-deferral
  */
@@ -36,6 +41,8 @@ interface ProvisionalEntry {
   createdAt: number
   /** Composer switch chosen before the session exists on the Host. */
   selection?: ModelSelection
+  /** Permission preset chosen before the session exists; replayed at materialization. */
+  pendingPreset?: string
 }
 
 /**
@@ -98,6 +105,34 @@ export function withSessionDeferral(
         const sessionId = sessionIdOf(call.payload)
         if (sessionId === undefined || !provisional.has(sessionId)) return api.call(call)
         return provisionalModels(api, provisional.get(sessionId)!, call.signal)
+      }
+      if (call.method === 'session.permissions') {
+        const sessionId = sessionIdOf(call.payload)
+        if (sessionId === undefined || !provisional.has(sessionId)) return api.call(call)
+        return provisionalPermissions(api, provisional.get(sessionId)!, call.signal)
+      }
+      if (call.method === 'session.setPermission') {
+        const sessionId = sessionIdOf(call.payload)
+        if (sessionId === undefined || !provisional.has(sessionId)) return api.call(call)
+        return provisionalSetPermission(api, provisional.get(sessionId)!, call.payload, call.signal)
+      }
+      if (call.method === 'commands.list' || call.method === 'skills.list') {
+        // Both directories describe a real Session composition; a provisional
+        // id has no agent yet, so answer empty and let the panel say when they
+        // become available instead of materializing the Session on a browse.
+        const sessionId = sessionIdOf(call.payload)
+        if (sessionId === undefined || !provisional.has(sessionId)) return api.call(call)
+        return {
+          ok: true,
+          value: call.method === 'commands.list'
+            ? { commands: [], provisional: true }
+            : { skills: [], provisional: true },
+        }
+      }
+      if (call.method === 'commands.execute') {
+        const sessionId = sessionIdOf(call.payload)
+        if (sessionId === undefined || !provisional.has(sessionId)) return api.call(call)
+        return provisionalCommand(api, provisional.get(sessionId)!, call.payload, call.signal)
       }
       if (call.method === 'session.selectModel') {
         const sessionId = sessionIdOf(call.payload)
@@ -224,6 +259,99 @@ async function provisionalModels(
       failures,
     },
   }
+}
+
+/** Build a session.permissions-shaped answer for a provisional id. */
+async function provisionalPermissions(
+  api: BrowserHostApi,
+  entry: ProvisionalEntry,
+  signal: AbortSignal,
+): Promise<HostRpcResult> {
+  // Inner API (not the deferral wrapper): session.permissions → the process catalog.
+  const catalog = await api.call({
+    rpcId: crypto.randomUUID(),
+    method: 'permission.catalog',
+    payload: {},
+    signal,
+  })
+  if (!catalog.ok) return catalog
+  const value = isRecord(catalog.value) ? catalog.value : {}
+  const options = Array.isArray(value.options) ? value.options : []
+  const defaultOptions = Array.isArray(value.defaultOptions) ? value.defaultOptions : []
+  const defaultPreset = typeof value.defaultPreset === 'string' ? value.defaultPreset : ''
+  return {
+    ok: true,
+    value: {
+      // The pending choice is what the next turn will actually run under.
+      current: entry.pendingPreset ?? defaultPreset,
+      routable: options.length > 0,
+      provisional: true,
+      options,
+      defaultOptions,
+      defaultPreset,
+    },
+  }
+}
+
+/**
+ * Remember a provisional preset choice. A provisional id has no agent, so the
+ * Host `/permission` command cannot run yet; materialization replays it before
+ * the first prompt is admitted.
+ */
+async function provisionalSetPermission(
+  api: BrowserHostApi,
+  entry: ProvisionalEntry,
+  payload: unknown,
+  signal: AbortSignal,
+): Promise<HostRpcResult> {
+  const preset = isRecord(payload) && typeof payload.preset === 'string' ? payload.preset.trim() : ''
+  if (preset === '') {
+    return { ok: false, error: { code: 'bad-request', message: 'session.setPermission requires a preset', details: {} } }
+  }
+  const catalog = await api.call({
+    rpcId: crypto.randomUUID(),
+    method: 'permission.catalog',
+    payload: {},
+    signal,
+  })
+  if (!catalog.ok) return catalog
+  const options = isRecord(catalog.value) && Array.isArray(catalog.value.options) ? catalog.value.options : []
+  if (!options.some((option) => isRecord(option) && option.value === preset)) {
+    return {
+      ok: false,
+      error: { code: 'bad-request', message: `unknown permission preset ${JSON.stringify(preset)}`, details: {} },
+    }
+  }
+  entry.pendingPreset = preset
+  return { ok: true, value: { preset, provisional: true, result: { kind: 'success' } } }
+}
+
+/**
+ * A provisional Session cannot run Host commands: only the permission switch
+ * is remembered, everything else waits for the first message.
+ */
+async function provisionalCommand(
+  api: BrowserHostApi,
+  entry: ProvisionalEntry,
+  payload: unknown,
+  signal: AbortSignal,
+): Promise<HostRpcResult> {
+  const line = isRecord(payload) && typeof payload.line === 'string' ? payload.line : ''
+  const preset = permissionPresetOf(line)
+  if (preset !== undefined) return provisionalSetPermission(api, entry, { preset }, signal)
+  return {
+    ok: false,
+    error: {
+      code: 'provisional-session',
+      message: 'this command needs a real session: send the first message to create it',
+      details: {},
+    },
+  }
+}
+
+/** Read the preset name out of an exact `/permission <preset>` line. */
+export function permissionPresetOf(line: string): string | undefined {
+  return /^\/permission[ \t]+([a-z0-9_-]+)[ \t]*$/u.exec(line)?.[1]
 }
 
 function modelSelectionOf(value: unknown): ModelSelection | undefined {

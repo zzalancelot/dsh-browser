@@ -64,12 +64,15 @@ describe('panel session transitions', () => {
       respondToApproval: vi.fn(async () => {}),
       resolveTabAffinity: vi.fn(async () => {}),
       rebindTabAffinity: vi.fn(async () => {}),
+      returnToControlledTab: vi.fn(async () => {}),
       clearSelection: vi.fn(async () => {}),
       registerWindow: vi.fn(async () => {}),
       setActiveSession: vi.fn()
         .mockResolvedValueOnce(undefined)
         .mockRejectedValueOnce(new Error('runtime port unavailable')),
       updateSettings: vi.fn(async () => {}),
+      onDevToolsStatus: vi.fn(() => unsubscribe),
+      detachDevTools: vi.fn(async () => undefined),
       requestStatus: vi.fn(async () => {}),
       probeAutomationSignals: vi.fn(async () => null),
     }
@@ -131,7 +134,7 @@ describe('panel session transitions', () => {
       return result.value
     })
     await renderConnected(null)
-    const trigger = document.querySelector<HTMLButtonElement>('.composer-model-trigger')!
+    const trigger = document.querySelector<HTMLButtonElement>('.composer-model .composer-chip-trigger')!
     expect(trigger.textContent).toContain('Saved model')
     await act(async () => { trigger.click() })
     const option = [...document.querySelectorAll<HTMLButtonElement>('[role="option"]')]

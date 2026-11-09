@@ -22,6 +22,7 @@ import {
   truncate,
 } from './extract.ts'
 import type { ElementIds } from './ids.ts'
+import { dispatchPaste } from './paste.ts'
 import type { SnapshotBudget } from './snapshot.ts'
 import {
   buildSnapshot,
@@ -425,6 +426,11 @@ export async function runAction(action: string, args: Record<string, unknown>, c
       return pressAction(args, ctx)
     case 'browser_scroll':
       return scrollAction(args, ctx)
+    case 'browser_clipboard':
+      if (args.action !== 'paste') {
+        throw new ActionError('bad-args', 'Only clipboard paste runs in the page; clipboard writes are dispatched by the browser background.')
+      }
+      return clipboardPasteAction(args, ctx)
     case 'browser_navigate':
       return navigateAction(args)
     case 'browser_back':
@@ -450,6 +456,16 @@ function automationSignalsAction(): ActionResult {
 }
 
 function snapshotAction(args: Record<string, unknown>, ctx: ActionContext): ActionResult {
+  if (args.query !== undefined) {
+    try {
+      const query = parseLocatorQuery(args.query)
+      const found = findElements(query)
+      return { text: renderFound(found, query, (el) => ctx.ids.indexOf(el)) }
+    } catch (error: unknown) {
+      if (error instanceof LocatorError) throw new ActionError('bad-args', error.message)
+      throw error instanceof Error ? error : new ActionError('action-failed', String(error))
+    }
+  }
   const delta = args.delta === true
   const region = typeof args.region === 'string' && args.region !== '' ? args.region : undefined
   try {
@@ -485,6 +501,56 @@ function withPageDelta(text: string, ctx: ActionContext): ActionResult {
     text,
     pageContent: renderSnapshot(view, true, Math.min(ctx.budget.maxChars, ACTION_DELTA_MAX_CHARS)),
   }
+}
+
+/** A short, model-facing description of the addressed element. */
+function targetLabel(args: Record<string, unknown>, el: Element): string {
+  // Selector- and focus-targeted calls have no index at all; reading through
+  // `numberArg` here used to throw before the action even ran.
+  const index = args.index
+  if (typeof index === 'number' && Number.isInteger(index) && index >= 0) return `[${index}]`
+  const selector = typeof args.selector === 'string' ? args.selector : ''
+  return `${el.tagName.toLowerCase()} (${selector})`
+}
+
+/**
+ * Dispatch the full pointer/mouse sequence at an element's center.
+ *
+ * Menus and custom controls bind `pointerdown`/`mousedown` rather than only
+ * `click`; a bare `el.click()` leaves them inert. Clicking with a synthetic
+ * `MouseEvent` still runs the browser's activation behavior for buttons,
+ * checkboxes and labels.
+ *
+ * @param el - target element.
+ * @param clicks - 1, 2, or 3 clicks; 2 also emits `dblclick`.
+ */
+function dispatchPointerClick(el: Element, clicks: number, button: number, modifiers: readonly string[]): void {
+  const rect = el.getBoundingClientRect()
+  const clientX = rect.left + rect.width / 2
+  const clientY = rect.top + rect.height / 2
+  const base = {
+    bubbles: true, cancelable: true, composed: true, clientX, clientY, button,
+    altKey: modifiers.includes('Alt'), ctrlKey: modifiers.includes('Control'),
+    metaKey: modifiers.includes('Meta'), shiftKey: modifiers.includes('Shift'),
+  }
+  const buttons = button === 0 ? 1 : button === 1 ? 4 : 2
+  for (let count = 1; count <= clicks; count += 1) {
+    if (typeof PointerEvent === 'function') {
+      el.dispatchEvent(new PointerEvent('pointerdown', {
+        ...base, pointerId: 1, pointerType: 'mouse', isPrimary: true, buttons,
+      }))
+    }
+    el.dispatchEvent(new MouseEvent('mousedown', { ...base, buttons, detail: count }))
+    if (typeof PointerEvent === 'function') {
+      el.dispatchEvent(new PointerEvent('pointerup', {
+        ...base, pointerId: 1, pointerType: 'mouse', isPrimary: true, buttons: 0,
+      }))
+    }
+    el.dispatchEvent(new MouseEvent('mouseup', { ...base, buttons: 0, detail: count }))
+    if (button === 2) el.dispatchEvent(new MouseEvent('contextmenu', { ...base, buttons: 0, detail: count }))
+    el.dispatchEvent(new MouseEvent(button === 0 ? 'click' : 'auxclick', { ...base, buttons: 0, detail: count }))
+  }
+  if (clicks >= 2 && button === 0) el.dispatchEvent(new MouseEvent('dblclick', { ...base, buttons: 0, detail: 2 }))
 }
 
 async function clickAction(args: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
@@ -735,13 +801,15 @@ function isEditable(el: Element): el is HTMLElement {
  * @param text - text to insert.
  * @param replace - whether to replace the host's current contents.
  */
-function typeIntoContentEditable(el: HTMLElement, text: string, replace: boolean): void {
+function typeIntoContentEditable(el: HTMLElement, text: string, replace: boolean, insert: boolean): void {
   // `isEditable` already refused a disabled island, so a null host here means
   // the element is editable without the attribute; address it directly.
   const host = editingHost(el) ?? el
   host.focus()
   const selection = host.ownerDocument.getSelection()
-  if (selection !== null) {
+  const selectionInside = selection !== null && selection.rangeCount > 0
+    && host.contains(selection.anchorNode) && host.contains(selection.focusNode)
+  if (selection !== null && (replace || !insert || !selectionInside)) {
     const range = host.ownerDocument.createRange()
     range.selectNodeContents(host)
     // A caret collapsed to the end appends; a full selection is replaced by insertText.
@@ -864,9 +932,33 @@ function assignInputFiles(input: HTMLInputElement, file: File): void {
   Object.defineProperty(input, 'files', { configurable: true, value: list })
 }
 
+/** Wire modifier names accepted by `browser_press`. */
+const PRESS_MODIFIERS = new Set(['Alt', 'Control', 'Meta', 'Shift'])
+
 async function pressAction(args: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
   const key = typeof args.key === 'string' && args.key !== '' ? args.key : ''
   if (key === '') throw new ActionError('bad-args', 'key must not be empty.')
+  const action = args.action === 'down' || args.action === 'up' ? args.action : 'press'
+  if (args.action !== undefined && args.action !== 'press' && action !== args.action) {
+    throw new ActionError('bad-args', `action must be "press", "down", or "up"; received "${String(args.action)}".`)
+  }
+  const repeat = args.repeat === undefined ? 1 : args.repeat
+  if (typeof repeat !== 'number' || !Number.isInteger(repeat) || repeat < 1 || repeat > 100) {
+    throw new ActionError('bad-args', 'repeat must be an integer between 1 and 100.')
+  }
+  const modifiers: string[] = []
+  if (Array.isArray(args.modifiers)) {
+    for (const value of args.modifiers) {
+      if (typeof value !== 'string' || !PRESS_MODIFIERS.has(value)) {
+        throw new ActionError('bad-args', 'modifiers must be a list of Alt, Control, Meta, or Shift.')
+      }
+      modifiers.push(value)
+    }
+  }
+  if (args.index !== undefined || args.selector !== undefined) {
+    const el = resolveActionTarget(args, ctx.ids)
+    if (el instanceof HTMLElement) el.focus()
+  }
   const target = document.activeElement instanceof HTMLElement ? document.activeElement : document.body
   target.dispatchEvent(new KeyboardEvent('keydown', { key, bubbles: true, cancelable: true }))
   target.dispatchEvent(new KeyboardEvent('keyup', { key, bubbles: true, cancelable: true }))
@@ -880,8 +972,47 @@ async function pressAction(args: Record<string, unknown>, ctx: ActionContext): P
   ) {
     target.form.dispatchEvent(new Event('submit', { bubbles: true, cancelable: true }))
   }
+  const chord = modifiers.length === 0 ? key : `${modifiers.join('+')}+${key}`
   await waitForPageSettled(ACTION_SETTLE)
-  return withPageDelta(`Sent key "${key}".`, ctx)
+  return withPageDelta(`Sent key "${chord}"${repeat > 1 ? ` ×${repeat}` : ''}.`, ctx)
+}
+
+/**
+ * Dispatch a paste event carrying text and optional sanitized HTML.
+ *
+ * The page's own paste handler consumes the event; no system clipboard is
+ * touched, so this works in every supported browser and never overwrites what
+ * the user has copied.
+ */
+async function clipboardPasteAction(args: Record<string, unknown>, ctx: ActionContext): Promise<ActionResult> {
+  const text = typeof args.text === 'string' ? args.text : ''
+  if (text === '') throw new ActionError('bad-args', 'text must not be empty when pasting.')
+  const html = typeof args.html === 'string' && args.html !== '' ? args.html : undefined
+  const focusedOnly = args.index === undefined && args.selector === undefined
+  const el = focusedOnly ? document.activeElement : resolveActionTarget(args, ctx.ids)
+  if (!(el instanceof Element)) {
+    throw new ActionError('action-failed', 'No element has focus; click the paste target first or pass index or selector.')
+  }
+  if (el instanceof HTMLElement) el.focus()
+  const accepted = dispatchPaste(el, { text, ...(html === undefined ? {} : { html }) })
+  const label = focusedOnly ? 'the focused element' : targetLabel(args, el)
+  // Plain form controls have no paste handler and an untrusted paste event has
+  // no default insertion; fall back to a caret insertion so the intent lands.
+  let fallback = false
+  if (!accepted && (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement)) {
+    const start = el.selectionStart ?? el.value.length
+    const end = el.selectionEnd ?? el.value.length
+    setNativeValue(el, `${el.value.slice(0, start)}${text}${el.value.slice(end)}`)
+    fallback = true
+  }
+  await waitForPageSettled(TYPE_SETTLE)
+  const detail = html === undefined ? 'text' : 'text+html'
+  const note = accepted
+    ? ''
+    : fallback
+      ? '; the page did not consume the paste event, so the text was inserted at the caret'
+      : '; the page did not consume the paste event'
+  return withPageDelta(`Pasted ${text.length} characters (${detail}) into ${label}${note}.`, ctx)
 }
 
 /** Directions `browser_scroll` accepts. */
@@ -1040,7 +1171,14 @@ function reloadAction(): ActionResult {
 
 async function getTextAction(args: Record<string, unknown>): Promise<ActionResult> {
   const selector = typeof args.selector === 'string' && args.selector !== '' ? args.selector : undefined
-  const source = selector !== undefined ? document.querySelector(selector) : null
+  let source: Element | null = null
+  if (selector !== undefined) {
+    try {
+      source = document.querySelector(selector)
+    } catch {
+      throw new ActionError('bad-args', `selector is not a valid CSS selector: ${selector}`)
+    }
+  }
   const text = source !== null ? pageText(source) : selector !== undefined ? `No element matched selector: ${selector}` : pageText()
   const truncated = truncate(text, 8_000)
   return { text: truncated.text + (truncated.truncated > 0 ? `\n(Truncated ${truncated.truncated} characters.)` : '') }
