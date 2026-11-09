@@ -346,16 +346,32 @@ if [ -f "$ROOT/.managed-by-install-sh" ]; then
 else
   INSTALL_MODE="checkout"
 fi
+INSTALL_GIT_HEAD=""
+if command -v git >/dev/null 2>&1 && [ -d "$ROOT/.git" ]; then
+  INSTALL_GIT_HEAD="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null || true)"
+fi
+if [ -z "$INSTALL_GIT_HEAD" ]; then
+  INSTALL_GIT_HEAD="$(curl --fail --location --silent --show-error \
+    -H 'Accept: application/vnd.github+json' \
+    -H 'User-Agent: dsh-browser-install' \
+    "https://api.github.com/repos/${REPOSITORY}/commits/${REMOTE_REF}" \
+    | node -e 'let s="";process.stdin.on("data",d=>s+=d);process.stdin.on("end",()=>{try{const j=JSON.parse(s);if(typeof j.sha==="string")process.stdout.write(j.sha)}catch{}})' \
+    || true)"
+fi
 node -e '
   const { writeFileSync } = require("node:fs");
-  const [filename, mode, sourceRoot] = process.argv.slice(1);
+  const [filename, mode, sourceRoot, repository, ref, gitHead] = process.argv.slice(1);
   const info = {
     schemaVersion: 1,
     mode,
+    repository,
+    ref,
+    ...(gitHead ? { gitHead } : {}),
     ...(mode === "checkout" ? { sourceRoot } : {}),
+    installedAt: new Date().toISOString(),
   };
   writeFileSync(filename, `${JSON.stringify(info, null, 2)}\n`);
-' "$DIST_DIR/install-info.json" "$INSTALL_MODE" "$ROOT"
+' "$DIST_DIR/install-info.json" "$INSTALL_MODE" "$ROOT" "$REPOSITORY" "$REMOTE_REF" "$INSTALL_GIT_HEAD"
 if copy_to_clipboard "$DIST_DIR"; then
   CLIPBOARD_READY=1
 else

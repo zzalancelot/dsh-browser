@@ -256,17 +256,38 @@ else
 fi
 mkdir -p "$DIST_DIR"
 rsync -a --delete-after "$EXT/dist/" "$DIST_DIR/"
+INSTALL_REF="$(git rev-parse --abbrev-ref HEAD 2>/dev/null || true)"
+case "$INSTALL_REF" in
+  ''|HEAD) INSTALL_REF="${DSH_INSTALL_BRANCH:-maintain}" ;;
+esac
+# Prefer the branch upstream remote (owner/name); fall back to origin, then the public default.
+INSTALL_REPOSITORY="${DSH_INSTALL_REPOSITORY:-}"
+if [ -z "$INSTALL_REPOSITORY" ]; then
+  upstream_remote="$(git rev-parse --abbrev-ref --symbolic-full-name '@{upstream}' 2>/dev/null | cut -d/ -f1 || true)"
+  for remote in "$upstream_remote" origin fork; do
+    [ -n "$remote" ] || continue
+    url="$(git remote get-url "$remote" 2>/dev/null || true)"
+    [ -n "$url" ] || continue
+    parsed="$(printf '%s' "$url" | sed -E 's#^(git@github\.com:|https://github\.com/)##; s#\.git$##')"
+    case "$parsed" in
+      */*) INSTALL_REPOSITORY="$parsed"; break ;;
+    esac
+  done
+fi
+INSTALL_REPOSITORY="${INSTALL_REPOSITORY:-Lum1104/dsh-browser}"
 node -e '
   const { writeFileSync } = require("node:fs");
-  const [filename, mode, sourceRoot, gitHead] = process.argv.slice(1);
+  const [filename, mode, sourceRoot, gitHead, repository, ref] = process.argv.slice(1);
   writeFileSync(filename, `${JSON.stringify({
     schemaVersion: 1,
     mode,
     sourceRoot,
     gitHead,
+    repository,
+    ref,
     installedAt: new Date().toISOString(),
   }, null, 2)}\n`);
-' "$DIST_DIR/install-info.json" "$INSTALL_MODE" "$ROOT" "$GIT_HEAD"
+' "$DIST_DIR/install-info.json" "$INSTALL_MODE" "$ROOT" "$GIT_HEAD" "$INSTALL_REPOSITORY" "$INSTALL_REF"
 
 if copy_to_clipboard "$DIST_DIR"; then
   CLIPBOARD_READY=1

@@ -36,6 +36,9 @@ export const BEACON_PORTS = [43189, 43190, 43191, 43192, 43193, 43194, 43195, 43
  */
 export const LEGACY_BRIDGE_PORTS = [3080, 3081, 3090, 14389] as const
 
+/** Loopback-only endpoint: compare install-info git head against the install source. */
+export const BRIDGE_UPDATE_CHECK_PATH = '/ext/bridge-update-check'
+
 /** Internal RPC used after an explicit tab handoff to seed the Agent's next step. */
 export const BRIDGE_INJECT_BROWSER_SNAPSHOT_METHOD = 'bridge.injectBrowserSnapshot'
 

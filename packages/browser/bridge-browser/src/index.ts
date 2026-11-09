@@ -35,12 +35,14 @@ import {
   BEACON_PORTS,
   BRIDGE_CONFIG_PATH,
   BRIDGE_PATH,
+  BRIDGE_UPDATE_CHECK_PATH,
   bridgeConfigPayload,
   DEFAULT_SNAPSHOT_MAX_CHARS,
   DEVTOOLS_CAPS_VERSION,
   MIN_SNAPSHOT_MAX_CHARS,
 } from './protocol.ts'
 import { bridgeWsUrlFromHttpHost } from './bridge-url.ts'
+import { checkForUpdate } from './update-check.ts'
 import { withSessionDeferral } from './session-deferral.ts'
 import { withSessionWorkspace } from './session-workspace.ts'
 import { purgeSessionFiles, type SessionPurgeDeps } from './session-purge.ts'
@@ -333,6 +335,42 @@ function mountBridge(
   // clients cannot use a 127.0.0.1 answer anyway.
   mountDiscoveryBeacon(ctx, resolved, hostPort)
 
+  // Update check for the Plugins detail page. Loopback-only: the response
+  // names the install source and commit SHAs, which are not secrets but are
+  // host-local diagnostics that LAN clients do not need.
+  const updateCheckRoute: WebRoute = {
+    kind: 'exact',
+    path: BRIDGE_UPDATE_CHECK_PATH,
+    handler: (req, res) => {
+      const cors = {
+        'access-control-allow-origin': '*',
+        'access-control-allow-methods': 'GET, OPTIONS',
+        'access-control-allow-private-network': 'true',
+      }
+      if (req.method === 'OPTIONS') {
+        res.writeHead(204, cors)
+        res.end()
+        return
+      }
+      if (!isLoopbackAddress(req.socket.remoteAddress)) {
+        res.writeHead(403, { 'content-type': 'application/json', ...cors })
+        res.end(JSON.stringify({ status: 'unavailable', reason: 'forbidden' }))
+        return
+      }
+      void checkForUpdate().then((result) => {
+        res.writeHead(200, { 'content-type': 'application/json', ...cors })
+        res.end(JSON.stringify(result))
+      }, (error: unknown) => {
+        res.writeHead(500, { 'content-type': 'application/json', ...cors })
+        res.end(JSON.stringify({
+          status: 'unavailable',
+          reason: 'network',
+          message: error instanceof Error ? error.message : String(error),
+        }))
+      })
+    },
+  }
+  ctx.effect(() => ctx.webServer.register(updateCheckRoute), 'bridge-browser: /ext/bridge-update-check route')
   ctx.effect(() => {
     const disposers = registerBrowserTools(ctx, server, {
       toolTimeoutMs: resolved.toolTimeoutMs,

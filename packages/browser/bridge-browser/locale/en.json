@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "Browser Bridge",
-    "description": "Connect the dsh browser extension so the model can read and operate the tab you control."
+    "title": "DeepSeek Browser Use",
+    "description": "Token-authenticated WebSocket bridge for the Chrome extension, plus text-only browser_* tools that read pages, click, type, scroll, and navigate in the user's real browser."
   }
 }

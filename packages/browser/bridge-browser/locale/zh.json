@@ -1,6 +1,6 @@
 {
   "meta": {
-    "title": "浏览器桥接",
-    "description": "连接 dsh 浏览器扩展，让模型读取并操作你指定的标签页。"
+    "title": "DeepSeek Browser Use",
+    "description": "通过 token 认证的 WebSocket 连接 Chrome 扩展，并提供纯文本 browser_* 工具，在真实浏览器中读取页面、点击、填表、滚动与导航。"
   }
 }
