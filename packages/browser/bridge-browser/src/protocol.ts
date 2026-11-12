@@ -18,6 +18,9 @@ export const BRIDGE_PATH = '/ext/bridge'
 /** Zero-config discovery endpoint: returns `{ wsUrl }` for the extension. */
 export const BRIDGE_CONFIG_PATH = '/ext/bridge-config'
 
+/** Loopback-only endpoint: compare install-info git head against the install source. */
+export const BRIDGE_UPDATE_CHECK_PATH = '/ext/bridge-update-check'
+
 /**
  * Fixed loopback ports the plugin's discovery beacon tries, in order.
  *
@@ -35,9 +38,6 @@ export const BEACON_PORTS = [43189, 43190, 43191, 43192, 43193, 43194, 43195, 43
  * ports operators historically picked. Probed after any remembered URL.
  */
 export const LEGACY_BRIDGE_PORTS = [3080, 3081, 3090, 14389] as const
-
-/** Loopback-only endpoint: compare install-info git head against the install source. */
-export const BRIDGE_UPDATE_CHECK_PATH = '/ext/bridge-update-check'
 
 /** Internal RPC used after an explicit tab handoff to seed the Agent's next step. */
 export const BRIDGE_INJECT_BROWSER_SNAPSHOT_METHOD = 'bridge.injectBrowserSnapshot'
@@ -95,10 +95,7 @@ export interface DevToolsCaps {
 
 /** Capabilities negotiated in `hello`/`hello.ok`. The extension performs its own actions; these bounds shape page snapshots. */
 export interface BridgeCaps {
-  /**
-   * Structured page inventory remains text-first. Visual fallbacks such as
-   * `browser_screenshot` are admitted as host attachments outside this flag.
-   */
+  /** The extension renders page state as text only (no screenshots). */
   textOnly: true
   /** Upper bound on one rendered snapshot's characters (plugin config, minimum 500). */
   snapshotMaxChars: number
