@@ -85,15 +85,6 @@ export interface PanelCopy {
     bridgeAddress: string
     bridgeHelp: string
     bridgePlaceholder: string
-    detect: string
-    detectCancel: string
-    detectHelp: string
-    detectProgress: (done: number, total: number) => string
-    detectEmpty: string
-    detectPick: string
-    detectCurrent: string
-    detectConnected: (address: string) => string
-    detectSource: Record<'fixed' | 'beacon', string>
     tokenHelp: string
     tokenPlaceholder: string
     pageSharing: string

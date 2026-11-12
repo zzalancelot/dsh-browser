@@ -183,6 +183,61 @@ const SETTINGS_DEFAULTS: Settings = {
  */
 const LEGACY_LOCAL_URL = 'ws://127.0.0.1:3080'
 const LEGACY_LOCAL_BRIDGE_URL = 'ws://127.0.0.1:3080/ext/bridge'
+const LAST_BRIDGE_URL_KEY = 'dshLastBridgeUrl'
+const DISCOVERY_LATCH_KEY = 'dshDiscoveryLatch'
+
+/** 一次面板租约内的自动探测闸门；`not-found` 表示已确认没有服务，不再重试。 */
+type DiscoveryLatch = 'idle' | 'running' | 'not-found'
+
+/** 报给面板的探测状态，与传输层状态分开。 */
+type DiscoveryState = 'idle' | 'running' | 'found' | 'not-found'
+
+let discoveryLatch: DiscoveryLatch = 'idle'
+let discoveryState: DiscoveryState = 'idle'
+/** 上次成功连接的桥地址，下次探测时优先尝试。 */
+let lastBridgeUrl: string | undefined
+/** 当前连接实际使用的地址（手动填写或探测得到）。 */
+let connectedAddress: string | undefined
+/** 用户点「自动检测」发起的枚举，同一时间只跑一个。 */
+let activeScan: { id: string; controller: AbortController } | undefined
+
+/** 记下成功的地址，供下次面板打开时优先尝试。 */
+function rememberBridgeUrl(url: string): void {
+  if (lastBridgeUrl === url) return
+  lastBridgeUrl = url
+  void Promise.resolve(chrome.storage.local.set({ [LAST_BRIDGE_URL_KEY]: url })).catch(() => {})
+}
+
+/** 跨 service worker 重启保留「未找到」，避免后台重启后偷偷重试。 */
+function persistDiscoveryLatch(value: DiscoveryLatch): void {
+  const area = (chrome.storage as { session?: chrome.storage.StorageArea }).session
+  if (area === undefined) return
+  void Promise.resolve(area.set({ [DISCOVERY_LATCH_KEY]: value })).catch(() => {})
+}
+
+/** 恢复上次运行留下的闸门与最近地址。 */
+async function loadDiscoveryMemory(): Promise<void> {
+  try {
+    const stored = await chrome.storage.local.get(LAST_BRIDGE_URL_KEY)
+    const remembered = stored?.[LAST_BRIDGE_URL_KEY]
+    if (typeof remembered === 'string' && remembered !== '') lastBridgeUrl = remembered
+  } catch {
+    // 记忆地址只是加速手段，读不到就按无记忆处理。
+  }
+  const area = (chrome.storage as { session?: chrome.storage.StorageArea }).session
+  if (area === undefined) return
+  try {
+    const stored = await area.get(DISCOVERY_LATCH_KEY)
+    if (stored?.[DISCOVERY_LATCH_KEY] === 'not-found') {
+      discoveryLatch = 'not-found'
+      discoveryState = 'not-found'
+    }
+  } catch {
+    // 同上：读不到按 idle 处理。
+  }
+}
+
+const discoveryMemory = loadDiscoveryMemory()
 
 const autoCacheIo = createChromeAutoCacheIo()
 
@@ -404,6 +459,8 @@ async function persistSettings(next: Partial<Settings>): Promise<void> {
   const accessRevision = changesUnrestrictedAccess ? ++unrestrictedAccessRevision : unrestrictedAccessRevision
   const updated = normalizeSettings({ ...settings, ...next })
   const revokesUnrestrictedAccess = settings.unrestrictedBrowserAccess && !updated.unrestrictedBrowserAccess
+  const changesDevTools = typeof next.allowDevTools === 'boolean'
+  const revokesDevTools = changesDevTools && (settings.allowDevTools || sessionDevToolsGrant) && !updated.allowDevTools
   const previousControlledTabId = tabAffinity.snapshot().controlled?.tabId
   settings = updated
   if (!updated.unrestrictedBrowserAccess) unrestrictedAccessActive = false
@@ -1748,16 +1805,27 @@ function cancelAllToolCalls(): void {
  * Nothing retries once that pass finds nothing.
  */
 async function startBridge(): Promise<void> {
+  if (panelPorts.size === 0) return
+  // One automatic pass per lease: a second panel joins instead of competing.
+  if (discoveryLatch === 'running') return
   const revision = ++bridgeStartRevision
-  if (panelPorts.size === 0) {
+  const lease = (): boolean => revision === bridgeStartRevision && panelPorts.size > 0
+  await discoveryMemory
+  if (!lease()) return
+  if (discoveryLatch === 'not-found' && settings.bridgeUrl.trim() === '') {
+    connectedAddress = undefined
+    discoveryState = 'not-found'
+    broadcastStatus()
     return
   }
-  const resolved = await resolveActiveBridgeUrl(
-    () => revision === bridgeStartRevision && panelPorts.size > 0,
-  )
+  discoveryLatch = 'running'
+  discoveryState = 'running'
+  broadcastStatus()
+  const resolved = await resolveActiveBridgeUrl(lease)
   // Discovery is asynchronous. A panel may have closed or a newer settings
   // update may have started while its fetches were in flight.
-  if (revision !== bridgeStartRevision || panelPorts.size === 0) {
+  if (!lease()) {
+    if (discoveryLatch === 'running') discoveryLatch = 'idle'
     return
   }
   if (resolved === undefined) {
@@ -1765,10 +1833,18 @@ async function startBridge(): Promise<void> {
     bridge = null
     rpc = null
     connectedAddress = undefined
+    discoveryLatch = 'not-found'
+    discoveryState = 'not-found'
+    persistDiscoveryLatch('not-found')
     broadcastStatus()
     return
   }
   const url = normalizeBridgeUrl(resolved.url)
+  connectedAddress = url
+  discoveryLatch = 'idle'
+  discoveryState = 'found'
+  rememberBridgeUrl(url)
+  persistDiscoveryLatch('idle')
   if (bridge === null) {
     const client = new BridgeClient({
       onStateChange: (state) => {
@@ -1810,6 +1886,72 @@ async function startBridge(): Promise<void> {
     rpc = createRpc(client)
   }
   bridge.start(url, settings.token)
+  broadcastStatus()
+}
+
+/**
+ * Enumerate every local instance for the settings picker.
+ * Results stream back to the requesting panel; cancellation ends the pass.
+ */
+async function runPanelDiscovery(port: chrome.runtime.Port, id: string): Promise<void> {
+  activeScan?.controller.abort()
+  const controller = new AbortController()
+  activeScan = { id, controller }
+  discoveryLatch = 'idle'
+  discoveryState = 'running'
+  persistDiscoveryLatch('idle')
+  broadcastStatus()
+  const reply = (message: unknown): void => {
+    try { port.postMessage(message) } catch { /* port closed */ }
+  }
+  try {
+    await discoveryMemory
+    const instances = await discoverInstances(planDiscovery({
+      ...(lastBridgeUrl === undefined ? {} : { rememberedUrl: lastBridgeUrl }),
+    }), {
+      probe: (candidate, timeoutMs) => readBridgeConfig(candidate, timeoutMs),
+      shouldContinue: () => !controller.signal.aborted,
+      onProgress: (progress) => {
+        if (activeScan?.id !== id) return
+        reply({
+          type: 'discovery.progress',
+          id,
+          done: progress.done,
+          total: progress.total,
+          instances: progress.instances,
+        })
+      },
+    }, { stopAtFirstHit: false })
+    if (activeScan?.id !== id) return
+    if (controller.signal.aborted) {
+      discoveryState = bridge?.state === 'connected' ? 'found' : 'idle'
+      broadcastStatus()
+      reply({ type: 'discovery.result', id, ok: false, error: { code: 'cancelled', message: 'discovery cancelled' } })
+      return
+    }
+    if (instances.length > 0) {
+      discoveryLatch = 'idle'
+      discoveryState = 'found'
+      rememberBridgeUrl(instances[0]!.wsUrl)
+    } else {
+      discoveryLatch = 'not-found'
+      discoveryState = 'not-found'
+      persistDiscoveryLatch('not-found')
+    }
+    broadcastStatus()
+    reply({ type: 'discovery.result', id, ok: true, instances })
+  } catch (error) {
+    if (activeScan?.id !== id) return
+    discoveryLatch = 'idle'
+    reply({
+      type: 'discovery.result',
+      id,
+      ok: false,
+      error: { code: 'scan-failed', message: error instanceof Error ? error.message : String(error) },
+    })
+  } finally {
+    if (activeScan?.id === id) activeScan = undefined
+  }
 }
 
 /** Debounced rediscovery when a loopback DSH page commits navigation. */

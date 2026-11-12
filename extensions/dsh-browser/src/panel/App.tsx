@@ -13,7 +13,15 @@ import type { BridgeCaps } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
 import type { ServerFrame } from '@yuxianglin/dsh-bridge-browser/src/protocol.ts'
 import type { BridgeState } from '../background/bridge.ts'
 import type { AffinityTab, TabAffinityDecision, TabAffinityState } from '../background/tab-affinity.ts'
-import { connectPanel, PanelRpcError, type AutomationSignalsSnapshot, type PanelApi, type PanelSettings } from './api.ts'
+import {
+  connectPanel,
+  PanelRpcError,
+  type AutomationSignalsSnapshot,
+  type DevToolsStatus,
+  type DiscoveryStatus,
+  type PanelApi,
+  type PanelSettings,
+} from './api.ts'
 import { renderMarkdown } from './markdown.ts'
 import whaleUrl from '../../assets/icons/deepseek-256.png'
 import type { ApprovalDecision, ApprovalRequest } from '../security/approval.ts'
@@ -844,6 +852,7 @@ export function App(): React.JSX.Element {
   const [showTextSize, setShowTextSize] = useState(false)
   const [approvalQueue, setApprovalQueue] = useState<ApprovalRequest[]>([])
   const [tabAffinity, setTabAffinity] = useState<TabAffinityState | null>(null)
+  const [tabAffinityReturnPending, setTabAffinityReturnPending] = useState(false)
   const [automationSignals, setAutomationSignals] = useState<AutomationSignalsSnapshot | null | undefined>(undefined)
   const [trustedOriginInput, setTrustedOriginInput] = useState('')
   const [error, setError] = useState<string | null>(null)
@@ -1043,6 +1052,15 @@ export function App(): React.JSX.Element {
     })
   }, [])
 
+  // Developer-tools state lives in the background: it owns the debugger
+  // attachment and reports every change here.
+  const [devToolsStatus, setDevToolsStatus] = useState<DevToolsStatus | null>(null)
+  useEffect(() => api.onDevToolsStatus(setDevToolsStatus), [api])
+
+  // Discovery state reported by the background. 'not-found' is terminal for the
+  // current panel lease, so the status chip can say so instead of "未连接".
+  const [discovery, setDiscovery] = useState<DiscoveryStatus>('idle')
+
   // Surface-signal meter under Controlling: scan once when the controlled tab
   // (or probe setting) changes.
   const probeEnabled = settings?.automationSignalsProbe === true
@@ -1072,11 +1090,10 @@ export function App(): React.JSX.Element {
   const [sessionEpoch, setSessionEpoch] = useState(0)
   const lastStateRef = useRef<BridgeState | null>(null)
   useEffect(() => {
-    const offStatus = api.onStatus((next, nextCaps, nextDiscovery, nextAddress) => {
+    const offStatus = api.onStatus((next, nextCaps, nextDiscovery) => {
       setState(next)
       setCaps(nextCaps)
       setDiscovery(nextDiscovery)
-      setBridgeAddress(nextAddress ?? null)
       const previous = lastStateRef.current
       lastStateRef.current = next
       if (previous !== null && next !== previous && next === 'stopped') {
@@ -2652,52 +2669,6 @@ export function App(): React.JSX.Element {
               placeholder={copy.settings.bridgePlaceholder}
             />
           </label>
-          <div className="bridge-detection">
-            <div className="bridge-detection-actions">
-              <button
-                type="button"
-                className="secondary"
-                onClick={() => { void runDetection() }}
-              >
-                {detecting ? copy.settings.detectCancel : copy.settings.detect}
-              </button>
-              <small>
-                {detectProgress === null
-                  ? copy.settings.detectHelp
-                  : copy.settings.detectProgress(detectProgress.done, detectProgress.total)}
-              </small>
-            </div>
-            {detectError === null ? null : <small className="settings-error">{detectError}</small>}
-            {detected.length > 0 ? (
-              <ul className="device-list">
-                {detected.map((instance) => {
-                  const current = bridgeAddress === instance.wsUrl
-                  return (
-                    <li key={instance.wsUrl}>
-                      <button
-                        type="button"
-                        className={current ? 'device-row current' : 'device-row'}
-                        title={copy.settings.detectPick}
-                        onClick={() => setSettings((prev) => prev === null ? prev : { ...prev, bridgeUrl: instance.wsUrl })}
-                      >
-                        <span className="device-address">{instance.wsUrl}</span>
-                        <span className="device-meta">
-                          {instance.sources.map((source) => copy.settings.detectSource[source]).join(' · ')}
-                          {instance.pid === undefined ? '' : ` · PID ${instance.pid}`}
-                          {current ? ` · ${copy.settings.detectCurrent}` : ''}
-                        </span>
-                      </button>
-                    </li>
-                  )
-                })}
-              </ul>
-            ) : detectAttempted && !detecting ? (
-              <small className="settings-error">{copy.settings.detectEmpty}</small>
-            ) : null}
-            {bridgeAddress === null || state !== 'connected'
-              ? null
-              : <small className="device-connected">{copy.settings.detectConnected(bridgeAddress)}</small>}
-          </div>
           <label>
             <span>Token</span>
             <small>{copy.settings.tokenHelp}</small>
@@ -3044,7 +3015,13 @@ export function App(): React.JSX.Element {
         probeEnabled={probeEnabled}
         signals={automationSignals}
       />
-      <TabAffinityBanner state={tabAffinity} copy={copy} onDecision={decideTabAffinity} />
+      <TabAffinityBanner
+        state={tabAffinity}
+        copy={copy}
+        onDecision={decideTabAffinity}
+        onReturn={() => { void returnToControlledTab() }}
+        returnPending={tabAffinityReturnPending}
+      />
       {showSessionPicker && (
         <section className="session-picker" aria-label={copy.app.sessions}>
           <div className="session-picker-head">
