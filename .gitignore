@@ -6,3 +6,8 @@ node_modules/
 **/dist-firefox/
 coverage/
 .artifacts/
+.pnpm-store/
+.tools/
+.DS_Store
+**/.DS_Store
+scripts/install-maintain-now.command
