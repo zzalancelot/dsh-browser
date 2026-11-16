@@ -172,6 +172,8 @@ export interface TabManagementContext {
   controlledTabId?: number
   /** Rebind subsequent tools to one existing tab; optionally activate it. */
   followTab?: (tab: chrome.tabs.Tab, options?: { activate: boolean }) => void | Promise<void>
+  /** Trusted input, when the platform and the user's browser allow it. */
+  input?: InputRuntime
   /** Mark the point after which a state-changing operation cannot be withdrawn. */
   commitAction?: () => void
   /** Restore withdrawability when a content-script action was not delivered. */
@@ -1051,6 +1053,7 @@ async function dispatchOnce(
   commitAction?: () => void,
   rollbackActionCommit?: () => void,
   policy?: ContentPolicyWire,
+  inputRuntime?: InputRuntime,
 ): Promise<ToolAnswer> {
   if (isCancelled(call, signal)) return cancelled()
   if (targetStillAllowed?.() === false) return targetChanged()
@@ -1605,7 +1608,7 @@ function sameTargetDocument(call: ToolCall, before: TabFrame[], after: TabFrame[
 }
 
 async function dispatchInjectableToolCall(
-  tab: Pick<chrome.tabs.Tab, 'id' | 'url' | 'title' | 'windowId'>,
+  tab: Pick<chrome.tabs.Tab, 'id' | 'url' | 'title'> & { windowId?: number },
   executionFrames: TabFrame[],
   call: ToolCall,
   effectiveBudget: ContentBudget,
@@ -1660,6 +1663,7 @@ async function dispatchInjectableToolCall(
         tabManagement.commitAction,
         tabManagement.rollbackActionCommit,
         tabManagement.contentPolicy,
+        tabManagement.input,
       )
     } catch (error: unknown) {
       if (isCancelled(call, signal)) return cancelled()

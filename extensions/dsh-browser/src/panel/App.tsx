@@ -46,6 +46,7 @@ import {
 import { canReturnToControlledTab } from './tab-handoff.ts'
 import { QuestionCard } from './QuestionCard.tsx'
 import { UpdateCard } from './UpdateCard.tsx'
+import { UninstallCard } from './UninstallCard.tsx'
 import { MessageImages } from './MessageImages.tsx'
 import type { QuestionAnswer } from './questions.ts'
 import {
@@ -73,6 +74,7 @@ import {
 } from './attachments.ts'
 import { imageErrorMessage } from './image-errors.ts'
 import { AssistantStreamView } from './assistant-stream.ts'
+import { SessionObservations, type ProjectionChange, type SessionState } from './session-observations.ts'
 import {
   canAcceptImageSelection,
   emptyComposerDraft,
@@ -844,6 +846,7 @@ export function App(): React.JSX.Element {
   const [addingImages, setAddingImages] = useState(false)
   const [busy, setBusy] = useState(false)
   const [working, setWorking] = useState(false)
+  const [continuable, setContinuable] = useState(false)
   const [stopping, setStopping] = useState(false)
   const [showSettings, setShowSettings] = useState(false)
   const [uiScale, setUiScale] = useState(DEFAULT_UI_SCALE)
@@ -896,11 +899,9 @@ export function App(): React.JSX.Element {
   const addingImagesRef = useRef(false)
   const sendingRef = useRef(false)
   const fileInputRef = useRef<HTMLInputElement | null>(null)
-  const imageProjectionRef = useRef<{
-    sessionId: string | null
-    seq: number
-    limits: ImageAttachmentLimits | null
-  }>({ sessionId: null, seq: Number.NEGATIVE_INFINITY, limits: null })
+  const observationsRef = useRef(new SessionObservations())
+  const modelRequestRef = useRef(0)
+  const permissionRequestRef = useRef(0)
   const sessionChangingRef = useRef(false)
   const sessionTransitionRef = useRef(0)
   const sessionInitializationRef = useRef(false)
@@ -1103,6 +1104,7 @@ export function App(): React.JSX.Element {
         sessionRef.current = null
         setResumeHint({ ready: false, sessionId: null })
         sessionRuntimeRef.current.clear()
+        observationsRef.current.clear()
         assistantStreamsRef.current.clear()
         followSnapshotsRef.current.clear()
         pendingHistoriesRef.current.clear()
@@ -1112,7 +1114,7 @@ export function App(): React.JSX.Element {
         setRows([])
         setDraft((current) => ({ ...current, images: [] }))
         setImageLimits(null)
-        imageProjectionRef.current = { sessionId: null, seq: Number.NEGATIVE_INFINITY, limits: null }
+        setContinuable(false)
         setSessionModels(null)
         setModelSelecting(false)
         setShowModelPicker(false)
@@ -1135,8 +1137,8 @@ export function App(): React.JSX.Element {
         setSessionEpoch((epoch) => epoch + 1)
       }
       if (previous !== null && next !== previous && next === 'connected' && sessionRef.current !== null) {
-        // A reconnect can outlive a directory read; reload instead of trusting
-        // whatever the previous bridge generation answered.
+        // 重连后重新建立当前会话的订阅和历史基线。
+        void refreshHistory(sessionRef.current)
         void refreshComposerDirectories(sessionRef.current)
       }
     })
@@ -1251,50 +1253,35 @@ export function App(): React.JSX.Element {
     return () => { document.removeEventListener('pointerdown', onPointerDown, true) }
   }, [showSlashMenu])
 
-  // A missed `turn/end` (dropped frame, panel opened mid-turn, sleep) must not
-  // disable the composer forever: re-read the Host's running flag on return.
-  useEffect(() => {
-    const onVisibilityChange = (): void => {
-      if (document.visibilityState !== 'visible') return
-      const sessionId = sessionRef.current
-      if (sessionId === null) return
-      void loadSessionCatalog().then(({ items }) => {
-        if (sessionRef.current !== sessionId) return
-        const entry = items.find((item) => item.sessionId === sessionId)
-        if (entry !== undefined) setWorking(entry.running)
-      }).catch(() => {})
+  function applyObservedSession(sessionId: string): void {
+    if (sessionRef.current !== sessionId) return
+    const observations = observationsRef.current
+    const observed = observations.state(sessionId)
+    if (observed !== undefined) {
+      setWorking(observed.running)
+      if (!observed.running) {
+        stoppingRef.current = false
+        setStopping(false)
+      }
     }
-    document.addEventListener('visibilitychange', onVisibilityChange)
-    return () => { document.removeEventListener('visibilitychange', onVisibilityChange) }
-  }, [])
-
-  function applyImageProjection(sessionId: string, seq: number, value: unknown): void {
-    if (sessionRef.current !== sessionId || !Number.isSafeInteger(seq)) return
-    const previous = imageProjectionRef.current
-    if (previous.sessionId === sessionId && seq <= previous.seq) return
-    const limits = parseImageAttachmentLimits(value)
-    imageProjectionRef.current = { sessionId, seq, limits }
-    setImageLimits(limits)
-  }
-
-  function applyHistoryImageProjection(sessionId: string, projections: HistoryPage['projections']): void {
-    if (projections === undefined) {
-      applyImageProjection(sessionId, -1, undefined)
-      return
-    }
-    const values = projections.values
-    applyImageProjection(
-      sessionId,
-      projections.asOfSeq,
-      typeof values === 'object' && values !== null ? values.imageLimits : undefined,
-    )
+    setImageLimits(parseImageAttachmentLimits(observations.value(sessionId, 'imageLimits')))
+    setContinuable(observations.canContinue(sessionId))
   }
 
   /** Live frame handling: session events append rows; turn/end reconciles with history. */
   async function onFrame(frame: ServerFrame): Promise<void> {
     if (frame.t !== 'event') return
+    if (frame.frame.method === 'session/state') {
+      const { sessionId, ...observed } = frame.frame.payload as SessionState & { sessionId: string }
+      if (!observationsRef.current.setState(sessionId, observed)) return
+      sessionRuntimeRef.current.setRunning(sessionId, observed.running)
+      applyObservedSession(sessionId)
+      return
+    }
     if (frame.frame.method === 'session/assistant-stream') {
-      const payload = frame.frame.payload as { sessionId?: unknown; snapshotId?: unknown; frame?: unknown } | undefined
+      const payload = frame.frame.payload as {
+        sessionId?: unknown; snapshotId?: unknown; frame?: unknown; history?: HistoryPage
+      } | undefined
       if (typeof payload?.sessionId !== 'string' || typeof payload.frame !== 'object' || payload.frame === null) return
       const sessionId = payload.sessionId
       const stream = assistantStreamsRef.current.get(sessionId) ?? new AssistantStreamView()
@@ -1311,7 +1298,8 @@ export function App(): React.JSX.Element {
         // beat it through the RPC channel. Other pending cuts may belong to a
         // newer follower whose baseline is still queued behind this one.
         pendingHistoriesRef.current.delete(payload.snapshotId)
-        if (pending !== undefined) applyHistory(sessionId, pending.history)
+        const history = payload.history ?? pending?.history
+        if (history !== undefined) applyHistory(sessionId, history)
       }
       setStreamRow(stream.row())
       if (update === 'rebaseline') await rebaselineStream(sessionId)
@@ -1336,15 +1324,19 @@ export function App(): React.JSX.Element {
       && typeof frame.frame.payload === 'object'
       && frame.frame.payload !== null) {
       const projection = frame.frame.payload as {
-        sessionId?: unknown
-        key?: unknown
-        value?: unknown
-        seq?: unknown
+        sessionId: string
+        changes: ProjectionChange[]
+        seq: number
       }
-      if (typeof projection.sessionId === 'string'
-        && projection.key === 'imageLimits'
-        && typeof projection.seq === 'number') {
-        applyImageProjection(projection.sessionId, projection.seq, projection.value)
+      observationsRef.current.change(projection.sessionId, projection.seq, projection.changes)
+      applyObservedSession(projection.sessionId)
+      if (projection.sessionId === sessionRef.current) {
+        if (projection.changes.some(change => change.key === 'modelSelection')) {
+          await refreshSessionModels(projection.sessionId)
+        }
+        if (projection.changes.some(change => change.key === 'permissions')) {
+          await refreshSessionPermissions(projection.sessionId)
+        }
       }
       return
     }
@@ -1367,27 +1359,18 @@ export function App(): React.JSX.Element {
       return
     }
     if (payload.event.type === 'turn/start') {
-      sessionRuntimeRef.current.startTurn(payload.sessionId)
       if (payload.sessionId !== sessionRef.current) return
       stoppingRef.current = false
       setStopping(false)
-      setWorking(true)
       return
     }
     if (payload.event.type === 'turn/end') {
-      sessionRuntimeRef.current.finishTurn(payload.sessionId)
+      sessionRuntimeRef.current.clearQuestions(payload.sessionId)
       if (payload.sessionId !== sessionRef.current) return
       stoppingRef.current = false
       setStopping(false)
-      setWorking(false)
       clearQuestions()
       await refreshHistory(payload.sessionId)
-      return
-    }
-    if (payload.event.type === 'permission/preset') {
-      // Another panel (or the Web GUI) may have switched this Session's preset;
-      // the projection is the authority, so re-read it for every own Session.
-      if (payload.sessionId === sessionRef.current) void refreshSessionPermissions(payload.sessionId)
       return
     }
     if (payload.sessionId !== sessionRef.current) return
@@ -1397,7 +1380,6 @@ export function App(): React.JSX.Element {
       return
     }
     if (payload.event.type === 'tool/call') {
-      setWorking(true)
       const summary = toolSummary(payload.event.data?.name ?? 'tool', payload.event.data?.arguments, locale)
       setRows((prev) => appendLiveRow(prev, 'tool', summary, nextSeq()))
       return
@@ -1475,6 +1457,8 @@ export function App(): React.JSX.Element {
   function applyHistory(id: string, history: HistoryPage): void {
     if (sessionRef.current !== id) return
     const followed = followSnapshotsRef.current.get(id)
+    // 同一基线可能先通过事件到达，再由 RPC 返回；只发布一次以保留实时追加内容。
+    if (history.snapshotId !== undefined && followed?.id === history.snapshotId && followed.applied) return
     // A newer history request may have replaced this follower while the RPC
     // response was travelling. Its older cut cannot replace the current view.
     if (history.snapshotId !== undefined && followed !== undefined && followed.id !== history.snapshotId) {
@@ -1496,7 +1480,10 @@ export function App(): React.JSX.Element {
       followed.applied = true
       followed.suffix = []
     }
-    applyHistoryImageProjection(id, history.projections)
+    observationsRef.current.baseline(id, history.projections ?? { asOfSeq: -1, values: {} })
+    applyObservedSession(id)
+    void refreshSessionModels(id)
+    void refreshSessionPermissions(id)
     const historyTitle = latestSessionTitle(events)
     if (historyTitle !== undefined) setSessionTitle(historyTitle)
     setRows(mergeHistoryRows(events, nextSeq, locale))
@@ -1536,6 +1523,7 @@ export function App(): React.JSX.Element {
 
   /** Pull the advisory model directory for the active session into the composer menu. */
   async function refreshSessionModels(sessionId: string | null = sessionRef.current): Promise<void> {
+    const request = ++modelRequestRef.current
     if (sessionId === null) {
       setSessionModels(null)
       setShowModelPicker(false)
@@ -1552,7 +1540,7 @@ export function App(): React.JSX.Element {
           models: Array<{ id: string; name: string; reasoning?: { efforts?: Array<{ id?: unknown; name?: unknown }> } }>
         }>
       }>('session.models', { sessionId })
-      if (sessionRef.current !== sessionId) return
+      if (sessionRef.current !== sessionId || request !== modelRequestRef.current) return
       const sessionOptions = (result.groups ?? []).flatMap((group) => group.models.map((model) => ({
         provider: group.id,
         providerName: group.name,
@@ -1571,7 +1559,7 @@ export function App(): React.JSX.Element {
         options,
       })
     } catch (cause) {
-      if (sessionRef.current !== sessionId) return
+      if (sessionRef.current !== sessionId || request !== modelRequestRef.current) return
       // Host-wide settings still list configured relays before a session exists.
       // An empty fallback is reported instead of a silently grey chip.
       setSessionModels(fromSettings === null
@@ -1697,6 +1685,7 @@ export function App(): React.JSX.Element {
 
   /** Pull the Session's permission directory (catalog plus its current preset). */
   async function refreshSessionPermissions(sessionId: string | null = sessionRef.current): Promise<void> {
+    const request = ++permissionRequestRef.current
     if (sessionId === null) {
       setSessionPermissions(null)
       setShowPermissionPicker(false)
@@ -1704,12 +1693,12 @@ export function App(): React.JSX.Element {
     }
     try {
       const result = await api.rpc<unknown>('session.permissions', { sessionId })
-      if (sessionRef.current !== sessionId) return
+      if (sessionRef.current !== sessionId || request !== permissionRequestRef.current) return
       const parsed = parseSessionPermissions(result)
       setSessionPermissions(parsed)
       if (parsed === null) setPermissionError(copy.app.permissionUnavailable)
     } catch (cause) {
-      if (sessionRef.current !== sessionId) return
+      if (sessionRef.current !== sessionId || request !== permissionRequestRef.current) return
       setSessionPermissions(null)
       setPermissionError(isUnavailableMethod(cause) ? copy.app.permissionUnavailable : describeCatalogFailure(cause))
     }
@@ -1720,7 +1709,7 @@ export function App(): React.JSX.Element {
    * A provisional Session answers empty with `provisional: true`; the panel
    * then keeps the last real directory and says when it becomes authoritative.
    */
-  async function refreshComposerCatalogs(sessionId: string | null = sessionRef.current): Promise<void> {
+  async function refreshComposerCatalogs(sessionId: string | null = sessionRef.current, passive = true): Promise<void> {
     if (sessionId === null) {
       setCommandDirectory(null)
       setSkillDirectory(null)
@@ -1728,7 +1717,7 @@ export function App(): React.JSX.Element {
       return
     }
     const [commands, skills] = await Promise.all([
-      api.rpc<unknown>('commands.list', { sessionId }).catch((cause: unknown) => cause),
+      api.rpc<unknown>('commands.list', { sessionId, passive }).catch((cause: unknown) => cause),
       api.rpc<unknown>('skills.list', { sessionId }).catch((cause: unknown) => cause),
     ])
     if (sessionRef.current !== sessionId) return
@@ -2051,7 +2040,7 @@ export function App(): React.JSX.Element {
       void api.clearSelection().catch(() => {})
     }
     setImageLimits(null)
-    imageProjectionRef.current = { sessionId: null, seq: Number.NEGATIVE_INFINITY, limits: null }
+    setContinuable(false)
     setWorking(nextWorking)
     setStopping(false)
     stoppingRef.current = false
@@ -2206,6 +2195,28 @@ export function App(): React.JSX.Element {
     }
   }
 
+  async function continueGeneration(): Promise<void> {
+    const id = sessionRef.current
+    if (id === null || sendingRef.current || sessionChangingRef.current
+      || !observationsRef.current.canContinue(id)) return
+    sendingRef.current = true
+    setBusy(true)
+    setWorking(true)
+    setContinuable(false)
+    setError(null)
+    try {
+      await api.rpc('session.prompt', { sessionId: id, mode: 'queue', content: [] })
+    } catch (cause) {
+      if (sessionRef.current === id) {
+        setError(describeCatalogFailure(cause))
+        applyObservedSession(id)
+      }
+    } finally {
+      setBusy(false)
+      sendingRef.current = false
+    }
+  }
+
   /** Cancel the active turn while keeping the sidebar session available. */
   async function stopTurn(): Promise<void> {
     const id = sessionRef.current
@@ -2215,11 +2226,6 @@ export function App(): React.JSX.Element {
     setError(null)
     try {
       await api.rpc('session.cancel', { sessionId: id })
-      if (sessionRef.current === id) {
-        sessionRuntimeRef.current.finishTurn(id)
-        setWorking(false)
-        clearQuestions()
-      }
     } catch (cause) {
       setError(cause instanceof Error ? cause.message : String(cause))
     } finally {
@@ -2970,6 +2976,7 @@ export function App(): React.JSX.Element {
           <button className="secondary" onClick={() => setShowSettings(false)}>{copy.settings.cancel}</button>
         </div>
         <p className="hint">{copy.settings.snapshotHint(caps?.snapshotMaxChars ?? DEFAULT_SNAPSHOT_MAX_CHARS)}</p>
+        <UninstallCard copy={copy.uninstall} />
       </div>{approvalDialog}</>
     )
   }
@@ -3100,6 +3107,12 @@ export function App(): React.JSX.Element {
             <span>{rows[rows.length - 1]?.kind === 'tool' ? copy.app.organizingResults : copy.app.thinking}</span>
           </div>
         )}
+        {continuable && !working && question === null && (
+          <button type="button" className="continue-generation" disabled={!sessionReady || busy}
+            onClick={() => { void continueGeneration() }}>
+            {copy.app.continueGeneration}
+          </button>
+        )}
       </div>
       {!atBottom && (
         <button
@@ -3223,7 +3236,9 @@ export function App(): React.JSX.Element {
               if (!sendingRef.current) setDraft((current) => ({ ...current, text: e.target.value }))
               const caret = e.target.selectionStart ?? e.target.value.length
               caretRef.current = caret
-              setShowSlashMenu(slashQuery(e.target.value, caret) !== null)
+              const openingMenu = slashQuery(e.target.value, caret) !== null
+              if (openingMenu && !showSlashMenu) void refreshComposerCatalogs(sessionRef.current, false)
+              setShowSlashMenu(openingMenu)
               setSlashIndex(0)
             }}
             onKeyDown={(e) => {

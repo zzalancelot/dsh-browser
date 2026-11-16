@@ -21,6 +21,7 @@ import {
   InvalidSelectorError,
   truncate,
 } from './extract.ts'
+import { findElements, LocatorError, parseLocatorQuery, renderFound } from './find.ts'
 import type { ElementIds } from './ids.ts'
 import { dispatchPaste } from './paste.ts'
 import type { SnapshotBudget } from './snapshot.ts'
@@ -158,6 +159,32 @@ export class ActionError extends Error {
     super(message)
     this.name = 'ActionError'
   }
+}
+
+/**
+ * Resolve the element a model action refers to: a stable inventory index or a
+ * CSS selector. Exactly one form is allowed; both and neither are caller bugs.
+ */
+export function resolveActionTarget(args: Record<string, unknown>, ids: ElementIds): Element {
+  const hasIndex = args.index !== undefined
+  const selector = typeof args.selector === 'string' && args.selector !== '' ? args.selector : undefined
+  if (hasIndex && selector !== undefined) {
+    throw new ActionError('bad-args', 'Provide either index or selector, not both.')
+  }
+  if (!hasIndex && selector === undefined) {
+    throw new ActionError('bad-args', 'Provide index or selector.')
+  }
+  if (hasIndex) return elementOrThrow(ids, numberArg(args, 'index'))
+  let found: Element | null
+  try {
+    found = document.querySelector(selector as string)
+  } catch {
+    throw new ActionError('bad-args', `selector is not a valid CSS selector: ${String(selector)}`)
+  }
+  if (found === null) {
+    throw new ActionError('action-failed', `No element matched selector: ${String(selector)}`)
+  }
+  return found
 }
 
 /** React-compatible value write: native setter + beforeinput/input/change events. */
@@ -852,7 +879,7 @@ async function typeAction(args: Record<string, unknown>, ctx: ActionContext): Pr
     scrollTargetIntoView(el)
   }
   if (isEditable(el)) {
-    typeIntoContentEditable(el, text, replace)
+    typeIntoContentEditable(el, text, replace, true)
   } else if (el instanceof HTMLInputElement || el instanceof HTMLTextAreaElement) {
     if (el instanceof HTMLInputElement && el.type === 'file') {
       throw new ActionError('action-failed', `Element ${label} is a file input; use browser_upload instead of browser_type.`)

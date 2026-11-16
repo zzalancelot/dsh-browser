@@ -1,4 +1,4 @@
-# dsh 浏览器操作 [![dshfind](https://dshfind.com/api/badge/Lum1104/dsh-browser?lang=zh)](https://dshfind.com/zh/plugins/Lum1104/dsh-browser?ref=badge)
+# dsh 浏览器操作
 
 [English](README.md) | **中文**
 
@@ -11,11 +11,11 @@
 浏览器操作以文本为主：页面会转换为结构化文本和带编号的交互元素清单，模型通过编号定位元素。当文本清单无法描述页面（canvas、验证码、图形或抓取失败）时，在设置中开启**截图增强模式**后，可用 `browser_screenshot` 截取受控标签页作为视觉兜底。dsh 0.1.5 的多模态对话仍走独立通道——宿主声明图片能力时，侧栏也可接收用户主动添加的 PNG、JPEG、WebP 和 GIF。
 
 > [!IMPORTANT]
-> 工作区针对最新公开发布的 dsh，目前固定使用 0.2.1-rc.5；不支持旧版 DSH。
+> 工作区固定使用 DSH 0.2.2-rc.2。
 
 ## 快速安装
 
-本项目不能只使用标准的 `dsh plugin` 命令安装。它同时包含 dsh bridge plugin 和浏览器扩展。一行安装器目前会安装 Chrome 构建。
+安装器会安装桥插件和 Chrome 扩展。
 
 macOS 与 Linux：
 
@@ -65,6 +65,7 @@ Playwright / 扩展的配对耗时比为 **1.24**（95% CI **1.16–1.34**）：
 | 自动化信号 | `browser_automation_signals` | 可选：启发式扫描客户端可见的反自动化/验证码信号（设置 → 自动化信号探针；非结论） |
 | 发送图片 | `session.prompt` / `session.attachment` | 按宿主能力启用图片草稿、纯图片消息和持久历史预览 |
 | 引用选中内容 | 侧栏输入框 | 在页面里划选的文字会出现在输入框，随下一条消息一起发送，并带上来源与不可信内容边界 |
+| 继续生成 | 侧栏 | 请求失败后，点击出现的“继续生成”按钮继续对话 |
 
 ### 已知限制
 
@@ -94,27 +95,11 @@ scripts/install.ps1
 
 ## 详细安装与使用
 
-前置要求：Node.js `>=24`、Corepack/pnpm，以及 Chrome 125+ 或 Firefox 140+。Windows 还需要系统自带的 Windows PowerShell 5.1，或 PowerShell 7+。
+前置要求：Node.js `>=24.9.0`、Corepack/pnpm，以及 Chrome 125+ 或 Firefox 140+。Windows 还需要系统自带的 Windows PowerShell 5.1，或 PowerShell 7+。
 
 ### 安装或更新
 
-托管安装请运行：
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/Lum1104/dsh-browser/refs/heads/main/scripts/install.sh | bash
-```
-
-Windows 请运行：
-
-```powershell
-$s="$env:TEMP\dsh-install.ps1"; irm https://raw.githubusercontent.com/Lum1104/dsh-browser/refs/heads/main/scripts/install.ps1 -OutFile $s; powershell -NoProfile -ExecutionPolicy Bypass -File $s
-```
-
-安装器会下载 `main`、构建并注册桥插件、把 Chrome 扩展构建到 `~/.dsh/browser-extension`，然后打开 `chrome://extensions`。首次安装时，请把该目录作为已解压扩展加载；更新时点击**重新加载**。如果 dsh 已在运行，请重启。
-
-`scripts/install.sh` 覆盖 macOS 与 Linux，`scripts/install.ps1` 覆盖 Windows；两者写入同一个托管工作区和同一份安装元数据。当系统提供剪贴板工具（`pbcopy`、`wl-copy`、`xclip`、`xsel` 或 PowerShell 的 `Set-Clipboard`）时，安装器会把扩展路径复制到剪贴板；无论是否复制成功都会打印该路径。若未检测到 Chrome/Chromium，安装器会打印对应的安装命令；设置 `DSH_INSTALL_BROWSER=1` 可让安装器尝试自动安装。
-
-Windows 命令先下载 `install.ps1` 再执行，而不是管道给 `Invoke-Expression`：脚本是带 BOM 的 UTF-8，Windows PowerShell 依赖 BOM 才能正确显示中文，而 `Invoke-Expression` 无法处理开头的 BOM。本地 checkout 路径可以包含空格；安装器通过 profile 内的目录联接注册桥插件，因此包规格中不会出现 Windows 绝对路径。
+运行[快速安装命令](#快速安装)即可安装或更新。安装器打开 `chrome://extensions` 后，首次安装时加载 `~/.dsh/browser-extension` 目录；更新后点击**重新加载**。如果 dsh 已在运行，请重启。
 
 如需从源码 checkout 安装当前分支：
 
@@ -125,6 +110,24 @@ cd dsh-browser
 ```
 
 Windows 请在 checkout 中运行 `.\scripts\install.ps1`。拉取或切换版本后，请重新运行安装器并重新加载扩展。
+
+### 卸载
+
+在扩展的**设置 → 卸载 dsh-browser**中复制命令，然后在终端运行。
+
+也可以直接运行。macOS 或 Linux：
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Lum1104/dsh-browser/refs/heads/main/scripts/uninstall.sh | bash
+```
+
+Windows 请运行：
+
+```powershell
+& { $ErrorActionPreference = 'Stop'; $d=New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) ('dsh-browser-uninstall.'+[Guid]::NewGuid().ToString('N'))); try { $s=Join-Path $d.FullName 'uninstall.ps1'; Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/Lum1104/dsh-browser/refs/heads/main/scripts/uninstall.ps1 -OutFile $s; powershell -NoProfile -ExecutionPolicy Bypass -File $s } finally { Remove-Item -LiteralPath $d.FullName -Recurse -Force } }
+```
+
+在源码目录中运行 `bash scripts/uninstall.sh` 或 `.\scripts\uninstall.ps1`。
 
 ### Firefox 源码构建
 
@@ -148,7 +151,7 @@ cd ~/.dsh/dsh-browser && pnpm start
 使用源码 checkout 时，请在仓库根目录运行 `pnpm start`。受支持的精确公开版本为：
 
 ```sh
-npx @deepseek-ai/dsh@0.2.1-rc.5 web
+npx @deepseek-ai/dsh@0.2.2-rc.2 web
 ```
 
 Chrome 本机使用无需配置；Firefox 需要填写上述本地桥 token。打开页面，点击 DeepSeek 鲸鱼图标，等待侧边栏显示**已连接**。已有 HTTP(S) 标签页会在第一次操作时自动加载。在浏览器受保护页面和扩展商店中，模型可以读取标签页元数据，并通过浏览器级能力导航到 HTTP(S)、后退、前进和刷新，但不能读取或操作受保护页面的 DOM。
@@ -157,10 +160,10 @@ Chrome 本机使用无需配置；Firefox 需要填写上述本地桥 token。�
 
 **侧边栏一直显示「未连接」**
 
-- 确认本机 dsh web 正在运行（默认 `http://127.0.0.1:3080`）。
-- 确认桥接已加载：浏览器打开 `http://127.0.0.1:3080/ext/bridge-config`，应返回类似 `{"wsUrl":"ws://127.0.0.1:3080/ext/bridge"}` 的 JSON。如果返回的是网页而不是 JSON，说明当前运行的 dsh 早于桥接注册——重启 dsh 并刷新页面即可，扩展会自动重连。
-- 面板打开时探测一次：已填地址优先尝试；回环地址连不上时再自动探测一次（上次成功的地址 → `dsh web` 默认端口 → 插件的固定信标端口 43189–43198）。都没找到时状态显示「未找到服务」，在重新打开面板或点「自动检测」之前不会重试。
-- DSH Desktop 每次启动都会重新随机分配本地 Web 端口，所以桥接插件同时监听一个固定回环信标端口。面板找不到时，打开**设置 → 自动检测**列出本机所有实例，点击其中一条即可填入地址；地址仍可手动填写。远程 `--host` 部署需要手动填写地址和 token；Firefox 始终需要 token。
+- 确认 DSH 正在运行。安装或更新后，重启 DSH 并重新打开侧栏。
+- 打开**设置 → 自动检测**，选择需要连接的 DSH 实例。
+- 使用 Firefox 时，在设置中填写 `~/.dsh/ext-bridge-token` 中的 token。
+- 连接远程 DSH 时，在设置中填写服务器地址和对应的桥接 token。
 
 **远程 `--host 0.0.0.0` / 局域网部署**
 
@@ -172,6 +175,8 @@ Chrome 本机使用无需配置；Firefox 需要填写上述本地桥 token。�
 ## 开发
 
 桥接插件和 Chrome/Firefox 扩展都属于本仓库 workspace；所有命令均在本仓库根目录执行。首次开发安装运行 `pnpm install`。
+
+开发文档：[浏览器桥插件](packages/browser/bridge-browser/README.zh.md)与[浏览器扩展](extensions/dsh-browser/README.zh.md)。
 
 ```sh
 pnpm run build
@@ -192,14 +197,13 @@ pnpm --filter dsh-browser-extension run test
 注意：
 
 - 启动前桥接插件必须已有 `lib/` 供 Loader 加载；`scripts/install.sh` 和根目录 `pnpm run build` 都会先构建插件再构建扩展。
-- 桥构建使用 Node.js `copyFileSync` 复制浏览器客户端，因此同一条包脚本不依赖 Unix `cp` 命令。
 - `@deepseek-ai/dsh` 与桥接插件的依赖固定在同一条经过验证的公开发布线上；升级时必须同时更新 manifest、锁文件并重跑根目录检查。
 
 `check:runtime` 检查实际解析的 DSH 依赖和锁文件；`test:smoke` 使用临时 DSH home 启动真实 web 宿主，验证桥接和重启后的会话读取，无需模型密钥。CI 在干净安装后运行这些检查。
 
 构建后运行 `pnpm test:browser`，需要已安装 Playwright Chromium，或通过 `CHROMIUM_PATH` 指定支持加载未打包扩展的 Chromium 可执行文件。测试会启动真实 DSH 和 Chromium，验证页面共享、开发者工具授权、输入、iframe 上传与定位，以及 CSS 修改。测试开启并确认跨站 iframe 的进程隔离，覆盖同源、跨源和嵌套 iframe 中的元素点击、输入与滚动。测试无需模型密钥，结果保存在 `.artifacts/browser-smoke/`。
 
-如果遇到 `cache.hydratePrepared is not a function`，更新仓库后重新运行 `pnpm install --frozen-lockfile` 和 `pnpm run build`，再重启 `pnpm start`。无需删除会话数据或清空全局缓存。
+构建扩展后运行 `pnpm test:uninstall`。设置界面测试使用 `pnpm test:uninstall:ui`，需要 Playwright Chromium。
 
 ## 安全
 

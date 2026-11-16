@@ -43,6 +43,7 @@
 
 import {
   BRIDGE_INJECT_BROWSER_SNAPSHOT_METHOD,
+  DEVTOOLS_CAPS_VERSION,
   isRespondResult,
   type BridgeCaps,
   type RespondResult,
@@ -1270,7 +1271,7 @@ async function refreshFollowedPage(sessionId: string, tabId: number): Promise<vo
       controller.signal,
       target,
       () => target.id !== undefined && tabAffinity.allowsTarget(target.id, sessionId),
-      { unrestrictedAccess },
+      { unrestrictedAccess, input: inputRuntime },
     )
     if (!answer.ok || controller.signal.aborted || !tabAffinity.allowsTarget(tabId, sessionId)) return
     if (typeof answer.result !== 'object' || answer.result === null) return
@@ -1556,6 +1557,7 @@ function routeToolCall(call: ToolCall): void {
         },
         ...(controlledTabId === undefined ? {} : { controlledTabId }),
         followTab: (tab, options) => followModelSelectedTab(tab, call.sessionId, options),
+        input: inputRuntime,
         commitAction,
         rollbackActionCommit,
       },
@@ -1620,6 +1622,7 @@ function routeToolCall(call: ToolCall): void {
               pointerTrail: settings.stealthMode,
               minimalScroll: settings.stealthMode,
             },
+            input: inputRuntime,
             commitAction,
             rollbackActionCommit,
           },
@@ -1881,6 +1884,8 @@ async function startBridge(): Promise<void> {
       const next = await resolveActiveBridgeUrl(shouldContinue)
       if (next !== undefined) void persistAutoBridgeUrl(next.url)
       return next?.url
+    }, {
+      ...devToolsCapability ? { devTools: { version: DEVTOOLS_CAPS_VERSION } } : {},
     })
     bridge = client
     rpc = createRpc(client)

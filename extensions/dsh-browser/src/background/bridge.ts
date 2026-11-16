@@ -64,6 +64,12 @@ export class BridgeClient {
     /** Whether a disconnected client still has an active user-owned lease. */
     private readonly shouldReconnect: () => boolean = () => true,
     private readonly resolveUrl?: BridgeResolveUrl,
+    /**
+     * Capabilities this build can serve beyond the text snapshot contract.
+     * Advertised on every `hello`: the host registers the developer-tools group
+     * only for an extension that claims it.
+     */
+    private readonly capabilities: Pick<BridgeCaps, 'devTools'> = {},
   ) {}
 
   /** Current coarse state (mirrors the last emitted sink value). */
@@ -183,6 +189,7 @@ export class BridgeClient {
           resolve()
         }, { once: true })
       })
+      void closeReason
       if (!this.running || generation !== this.generation) {
         socket.close()
         return

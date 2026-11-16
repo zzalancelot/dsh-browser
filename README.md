@@ -1,4 +1,4 @@
-# dsh Browser Control [![dshfind](https://dshfind.com/api/badge/Lum1104/dsh-browser?lang=zh)](https://dshfind.com/zh/plugins/Lum1104/dsh-browser?ref=badge)
+# dsh Browser Control
 
 **English** | [中文](README.zh.md)
 
@@ -11,11 +11,11 @@ Connect [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness) to t
 Browser operation is text-first: pages become structured text with a numbered inventory of interactive elements, and the model addresses those elements by number. When that text inventory cannot describe the page (canvas, captcha, graphics, or scrape failure), enabling **Screenshot enhancement** in Settings unlocks `browser_screenshot` as a visual fallback. dsh 0.1.5 multimodal chat remains separate—the side panel also accepts user-attached PNG, JPEG, WebP, and GIF images when the host advertises image support.
 
 > [!IMPORTANT]
-> The workspace targets the latest public dsh release, currently pinned to 0.2.1-rc.5. Older DSH releases are not supported.
+> The workspace is pinned to DSH 0.2.2-rc.2.
 
 ## Quick install
 
-The standard `dsh plugin` command alone cannot install this project. The integration contains both a dsh bridge plugin and a browser extension. The one-line installer currently sets up the Chrome build.
+The installer installs the bridge plugin and Chrome extension.
 
 macOS and Linux:
 
@@ -65,6 +65,7 @@ The paired Playwright / extension duration ratio was **1.24** (95% CI **1.16–1
 | Automation signals | `browser_automation_signals` | Opt-in heuristic client-visible anti-automation / captcha signals (Settings → Automation signals probe; not a verdict) |
 | Send images | `session.prompt` / `session.attachment` | Host-capability-gated image drafts, image-only prompts, and durable history previews |
 | Quote a selection | side panel composer | Text you highlight in the page appears in the composer and is sent with your next message as fenced, attributed page content |
+| Continue generating | side panel | Continue an interrupted response when the host offers it |
 
 ### Known limits
 
@@ -94,27 +95,11 @@ scripts/install.ps1
 
 ## Detailed installation and usage
 
-Requirements: Node.js `>=24`, Corepack/pnpm, and Chrome 125+ or Firefox 140+. Windows additionally needs Windows PowerShell 5.1, which ships with Windows, or PowerShell 7+.
+Requirements: Node.js `>=24.9.0`, Corepack/pnpm, and Chrome 125+ or Firefox 140+. Windows additionally needs Windows PowerShell 5.1, which ships with Windows, or PowerShell 7+.
 
 ### Install or update
 
-For a managed installation, run:
-
-```sh
-curl -fsSL https://raw.githubusercontent.com/Lum1104/dsh-browser/refs/heads/main/scripts/install.sh | bash
-```
-
-or, on Windows:
-
-```powershell
-$s="$env:TEMP\dsh-install.ps1"; irm https://raw.githubusercontent.com/Lum1104/dsh-browser/refs/heads/main/scripts/install.ps1 -OutFile $s; powershell -NoProfile -ExecutionPolicy Bypass -File $s
-```
-
-The installer downloads `main`, builds and registers the bridge plugin, builds the Chrome extension into `~/.dsh/browser-extension`, and opens `chrome://extensions`. On the first install, load that directory as an unpacked extension; on updates, click **Reload**. Restart dsh if it is already running.
-
-`scripts/install.sh` covers macOS and Linux, and `scripts/install.ps1` covers Windows; both write the same managed workspace and the same install metadata. The installer copies the extension path to the clipboard when a clipboard tool is available (`pbcopy`, `wl-copy`, `xclip`, `xsel`, or PowerShell's `Set-Clipboard`), and prints the path either way. When no Chrome or Chromium install is found, it prints the command that installs one; set `DSH_INSTALL_BROWSER=1` to let the installer attempt that install itself.
-
-The Windows command downloads `install.ps1` and runs it rather than piping it into `Invoke-Expression`: the script is UTF-8 with a byte order mark so Windows PowerShell renders its Chinese output, and `Invoke-Expression` rejects a leading mark. Local checkout paths may contain spaces; the installer registers the bridge through a profile-local directory junction so the package spec never contains the absolute Windows path.
+Run the [quick install command](#quick-install) to install or update. The installer opens `chrome://extensions`; load `~/.dsh/browser-extension` as an unpacked extension the first time, or click **Reload** after an update. Restart dsh if it is already running.
 
 To install the current branch from a source checkout instead:
 
@@ -125,6 +110,24 @@ cd dsh-browser
 ```
 
 On Windows, run `.\scripts\install.ps1` from the checkout instead. After pulling or switching revisions, rerun the installer and reload the extension.
+
+### Uninstall
+
+Open **Settings → Uninstall dsh-browser** in the extension, copy the command, and run it in Terminal.
+
+You can also run it directly. On macOS or Linux:
+
+```sh
+curl -fsSL https://raw.githubusercontent.com/Lum1104/dsh-browser/refs/heads/main/scripts/uninstall.sh | bash
+```
+
+On Windows:
+
+```powershell
+& { $ErrorActionPreference = 'Stop'; $d=New-Item -ItemType Directory -Path (Join-Path ([IO.Path]::GetTempPath()) ('dsh-browser-uninstall.'+[Guid]::NewGuid().ToString('N'))); try { $s=Join-Path $d.FullName 'uninstall.ps1'; Invoke-WebRequest -UseBasicParsing https://raw.githubusercontent.com/Lum1104/dsh-browser/refs/heads/main/scripts/uninstall.ps1 -OutFile $s; powershell -NoProfile -ExecutionPolicy Bypass -File $s } finally { Remove-Item -LiteralPath $d.FullName -Recurse -Force } }
+```
+
+From a checkout, run `bash scripts/uninstall.sh` or `.\scripts\uninstall.ps1`.
 
 ### Firefox source build
 
@@ -148,7 +151,7 @@ cd ~/.dsh/dsh-browser && pnpm start
 From a source checkout, run `pnpm start` in the repository root. The exact supported public runtime is:
 
 ```sh
-npx @deepseek-ai/dsh@0.2.1-rc.5 web
+npx @deepseek-ai/dsh@0.2.2-rc.2 web
 ```
 
 Local Chrome use requires no configuration; Firefox requires the local bridge token described above. Open a page, click the DeepSeek whale icon, and wait for **Connected**. Existing HTTP(S) tabs are instrumented on the first action. On browser-protected pages and extension stores, the model can read tab metadata and use browser-level HTTP(S) navigation, back, forward, and reload, but it cannot inspect or operate the protected page DOM.
@@ -157,10 +160,10 @@ Local Chrome use requires no configuration; Firefox requires the local bridge to
 
 **Side panel stays "Not connected"**
 
-- Make sure dsh web is running locally (default `http://127.0.0.1:3080`).
-- Verify the bridge is loaded: open `http://127.0.0.1:3080/ext/bridge-config`. It should return JSON such as `{"wsUrl":"ws://127.0.0.1:3080/ext/bridge"}`. If it returns a web page instead of JSON, the running dsh predates the bridge registration — restart dsh and refresh the page; the extension reconnects on its own.
-- Discovery runs once when the panel opens. A filled-in address is tried first; if a **loopback** address does not answer, the panel makes one automatic pass (last working URL → `dsh web` defaults → the plugin's fixed beacon ports 43189–43198). When that pass finds nothing the status reads **No service found** and nothing retries until you reopen the panel or press **Detect**.
-- DSH Desktop assigns a random local Web port on every launch, which is why the bridge plugin also listens on a fixed loopback beacon port. If the panel cannot find it, open **Settings → Detect** to list every local instance and click the one to use; the address can still be typed by hand. Remote `--host` deployments need the address and token filled in manually; Firefox always requires the token.
+- Make sure DSH is running. After installing or updating, restart DSH and reopen the side panel.
+- Open **Settings → Detect** and select your DSH instance.
+- In Firefox, enter the token from `~/.dsh/ext-bridge-token` in Settings.
+- For a remote DSH instance, enter its server address and bridge token in Settings.
 
 **Remote `--host 0.0.0.0` / LAN deployments**
 
@@ -172,6 +175,8 @@ Do not expose `dsh web --host 0.0.0.0` on untrusted networks. Optional: `EXT_CON
 ## Development
 
 The bridge plugin and Chrome/Firefox extension are both members of this repository's workspace. Run all commands from the repository root. For the first development installation, run `pnpm install`.
+
+Package documentation: [browser bridge](packages/browser/bridge-browser/README.md) and [browser extension](extensions/dsh-browser/README.md).
 
 ```sh
 pnpm run build
@@ -192,14 +197,13 @@ pnpm --filter dsh-browser-extension run test
 Notes:
 
 - The bridge plugin must have a built `lib/` before startup because the loader consumes it; both `scripts/install.sh` and the root `pnpm run build` build the plugin before the extension.
-- The bridge build copies its browser client with Node.js `copyFileSync`, so the same package script works without a Unix `cp` executable.
 - The dependencies of `@deepseek-ai/dsh` and the bridge plugin are pinned to the same tested public release line. An upgrade must update the manifests and lockfile together and rerun the root checks.
 
 `check:runtime` checks the resolved DSH dependencies and lockfile; `test:smoke` starts the real web host in a temporary DSH home and verifies the bridge and session reads after a restart, without model credentials. CI runs these checks after a clean installation.
 
 After building, run `pnpm test:browser` with a Playwright Chromium installation, or set `CHROMIUM_PATH` to a Chromium executable that supports loading unpacked extensions. This starts real DSH and Chromium instances to verify sharing controls, developer-tools consent, input, iframe uploads and targeting, and CSS edits. Site isolation is enabled and verified for cross-site frames; element clicks, input, and scrolling cover same-origin, cross-origin, and nested frames. It needs no model credentials and saves results under `.artifacts/browser-smoke/`.
 
-If you encounter `cache.hydratePrepared is not a function`, update the repository, rerun `pnpm install --frozen-lockfile` and `pnpm run build`, then restart `pnpm start`. Session data and the global package cache can be kept.
+After building the extension, run `pnpm test:uninstall`. Run `pnpm test:uninstall:ui` for the settings UI tests; Playwright Chromium is required.
 
 ## Security
 

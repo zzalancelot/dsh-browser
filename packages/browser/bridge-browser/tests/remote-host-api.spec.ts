@@ -22,9 +22,20 @@ function harness(options: {
   fetch?: (request: Request, peer: HostPeerLike) => Promise<Response>
 } = {}) {
   const invoke = vi.fn(options.invoke ?? (async () => ({ accepted: true })))
-  const open = vi.fn(options.open ?? (async (_endpoint, _payload, _uplink, _peer, signal) => ({
-    async *[Symbol.asyncIterator]() { await abortWait(signal) },
-  })))
+  const open = vi.fn<TypertGatewayLike['wireStream']['open']>(async (...args) => {
+    const [endpoint, , , , signal] = args
+    if (endpoint === 'session/observeProjections' || endpoint === 'session/observeState') {
+      return {
+        async *[Symbol.asyncIterator]() {
+          if (endpoint === 'session/observeProjections') yield { type: 'ready' }
+          // 保持状态读取未完成，检查历史与消息流可以独立交付。
+          await abortWait(signal)
+        },
+      }
+    }
+    if (options.open !== undefined) return options.open(...args)
+    return { async *[Symbol.asyncIterator]() { await abortWait(signal) } }
+  })
   const requestBodies: unknown[] = []
   const fetch = vi.fn(options.fetch ?? (async (request: Request, _peer: HostPeerLike) => {
     const body = await request.clone().json() as { rpcId: string }
@@ -151,8 +162,8 @@ describe('dsh 0.2 Remote Host adapter', () => {
     } })
     await api.call(call('session.history', { sessionId: 'session-1', beforeSeq: 5 }))
     expect(invoke).toHaveBeenCalledWith(expect.objectContaining({
-      namespace: 'session', method: 'page',
-      args: { request: { address: { kind: 'session', sessionId: 'session-1' }, throughSeq: 8, beforeSeq: 5 } },
+      namespace: 'session', method: 'events',
+      args: { request: { address: { kind: 'session', sessionId: 'session-1' }, beforeSeq: 5 } },
     }))
     abort.abort()
     await events.return?.()
@@ -303,6 +314,7 @@ describe('dsh 0.2 Remote Host adapter', () => {
         request: {
           address: { kind: 'session', sessionId: 'session-1' },
           maxMessages: 2,
+          activate: false,
           assistantStream: true,
         },
       },
@@ -335,6 +347,7 @@ describe('dsh 0.2 Remote Host adapter', () => {
         request: {
           address: { kind: 'session', sessionId: 'session-one-shot' },
           maxMessages: 12,
+          activate: false,
           assistantStream: true,
         },
       },
@@ -362,14 +375,13 @@ describe('dsh 0.2 Remote Host adapter', () => {
     expect(invoke).not.toHaveBeenCalled()
   })
 
-  it('pages older history with a Host-legal throughSeq, never MAX_SAFE_INTEGER', async () => {
-    const { api, invoke, open, peer } = harness({
+  it('reads older history through passive session/events without opening a follower', async () => {
+    const { api, invoke, open } = harness({
       invoke: async ({ namespace, method, args }) => {
-        if (`${namespace}/${method}` !== 'session/page') throw new Error(`${namespace}/${method}`)
+        if (`${namespace}/${method}` !== 'session/events') throw new Error(`${namespace}/${method}`)
         expect(args).toEqual({
           request: {
             address: { kind: 'session', sessionId: 'session-1' },
-            throughSeq: 42,
             beforeSeq: 10,
             maxMessages: 20,
           },
@@ -406,15 +418,12 @@ describe('dsh 0.2 Remote Host adapter', () => {
       args: { request: { address: { kind: 'session', sessionId: 'session-1' }, assistantStream: true } },
     }, expect.anything(), expect.objectContaining({ principal: { kind: 'owner' }, interactions: 'answer' }), expect.any(AbortSignal))
     expect(invoke).toHaveBeenCalledOnce()
-    const pageArgs = invoke.mock.calls[0]?.[0]?.args as { request: { throughSeq: number } }
-    expect(pageArgs.request.throughSeq).toBe(42)
-    expect(pageArgs.request.throughSeq).not.toBe(Number.MAX_SAFE_INTEGER)
   })
 
-  it('fails closed when session/page returns a malformed history page', async () => {
+  it('reports malformed session/events pages', async () => {
     const { api } = harness({
       invoke: async ({ namespace, method }) => {
-        if (`${namespace}/${method}` !== 'session/page') throw new Error(`${namespace}/${method}`)
+        if (`${namespace}/${method}` !== 'session/events') throw new Error(`${namespace}/${method}`)
         return { records: 'not-an-array' }
       },
       open: async (endpoint) => {
@@ -436,16 +445,16 @@ describe('dsh 0.2 Remote Host adapter', () => {
       ok: false,
       error: {
         code: 'internal',
-        message: 'session/page returned an invalid history page',
+        message: 'session/events returned an invalid history page',
         details: {},
       },
     })
   })
 
-  it('fails closed when session/page records omit a usable event envelope', async () => {
+  it('reports session/events records without a usable event envelope', async () => {
     const { api } = harness({
       invoke: async ({ namespace, method }) => {
-        if (`${namespace}/${method}` !== 'session/page') throw new Error(`${namespace}/${method}`)
+        if (`${namespace}/${method}` !== 'session/events') throw new Error(`${namespace}/${method}`)
         return {
           records: [
             { type: 'event', event: { type: 'user/message', seq: 1, time: 1, data: {} } },
@@ -483,6 +492,7 @@ describe('dsh 0.2 Remote Host adapter', () => {
     let releaseStale!: () => void
     let releaseFresh!: () => void
     let staleClosed = false
+    let opened = 0
     const staleGate = new Promise<void>((resolve) => { releaseStale = resolve })
     const freshGate = new Promise<void>((resolve) => { releaseFresh = resolve })
     const { api } = harness({
@@ -496,10 +506,9 @@ describe('dsh 0.2 Remote Host adapter', () => {
           }
         }
         if (endpoint !== 'session/follow') throw new Error(endpoint)
-        const sessionId = (payload as {
-          args: { request: { address: { sessionId: string } } }
-        }).args.request.address.sessionId
-        const stale = sessionId === 'session-old'
+        expect((payload as { args: { request: { address: { sessionId: string } } } })
+          .args.request.address.sessionId).toBe('session-new')
+        const stale = ++opened === 1
         return {
           async *[Symbol.asyncIterator]() {
             try {
@@ -523,7 +532,7 @@ describe('dsh 0.2 Remote Host adapter', () => {
     const events = api.events(abort.signal)[Symbol.asyncIterator]()
     const nextEvent = events.next()
 
-    await expect(api.call(call('session.history', { sessionId: 'session-old' })))
+    await expect(api.call(call('session.history', { sessionId: 'session-new' })))
       .resolves.toMatchObject({ ok: true })
     await expect(api.call(call('session.history', { sessionId: 'session-new' })))
       .resolves.toMatchObject({ ok: true })

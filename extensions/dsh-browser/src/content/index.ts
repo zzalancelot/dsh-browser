@@ -14,6 +14,7 @@ import { DEFAULT_SNAPSHOT_MAX_CHARS } from '@yuxianglin/dsh-bridge-browser/src/p
 import { runAction, ActionError } from './actions.ts'
 import { ElementIds } from './ids.ts'
 import { collectAutomationSignals } from './automation-signals.ts'
+import { handleInputSetup } from './input-support.ts'
 import { setContentPolicy, type ContentPolicy } from './policy.ts'
 import { SelectionWatcher } from './selection.ts'
 import type { InputSetupRequest } from '../shared/input-setup.ts'
