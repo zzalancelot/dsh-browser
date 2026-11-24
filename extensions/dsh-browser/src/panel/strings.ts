@@ -49,14 +49,11 @@ export interface PanelCopy {
     questionTitle: string
     questionBody: (controlled: string, active: string) => string
     keep: string
-    keepAlways: string
     follow: string
     /** Move the user's own tab back to the page the assistant is bound to. */
-    returnToAssistant: string
     backgroundTitle: (controlled: string) => string
     backgroundBody: (active: string) => string
     pinnedBody: (active: string) => string
-    askAgain: string
     followCurrent: string
     lostTitle: string
     lostBody: string
@@ -195,7 +192,6 @@ export interface PanelCopy {
     copyError: string
   }
   textSize: {
-    open: string
     title: string
     smaller: string
     larger: string
@@ -203,6 +199,8 @@ export interface PanelCopy {
     value: (percent: string) => string
   }
   app: {
+    starBanner: string
+    starBannerAction: string
     openSettings: string
     settings: string
     openSessions: string
@@ -214,10 +212,6 @@ export interface PanelCopy {
     deleteSessionConfirm: (title: string) => string
     deleteSessionFailed: (reason: string) => string
     deletePurgeFailed: (reason: string) => string
-    emptyTitle: string
-    emptyDescription: string
-    overviewPage: string
-    overviewPrompt: string
     assistant: string
     assistantWorking: string
     organizingResults: string
@@ -366,14 +360,11 @@ const EN: PanelCopy = {
     closedTab: 'Closed tab',
     questionTitle: 'Follow your current page?',
     questionBody: (controlled, active) => `It is still bound to “${controlled}”, while you moved to “${active}”. Browser actions are paused until you choose.`,
-    keep: 'Assistant stays on the original page',
-    keepAlways: 'Assistant stays & stop asking',
-    follow: 'Assistant follows the current page',
-    returnToAssistant: 'Jump back to the assistant page',
+    keep: 'Stay',
+    follow: 'Follow',
     backgroundTitle: () => 'Assistant stays on the original page',
     backgroundBody: (active) => `You are viewing “${active}”. Future browser actions still run on the original page.`,
     pinnedBody: (active) => `You are viewing “${active}”. Future browser actions still run on the original page, and switching tabs will not ask again.`,
-    askAgain: 'Ask on tab switch',
     followCurrent: 'Follow the current page',
     lostTitle: 'The controlled tab was closed',
     lostBody: 'Browser actions are paused to avoid operating the wrong page.',
@@ -512,7 +503,6 @@ const EN: PanelCopy = {
     copyError: 'Copy failed',
   },
   textSize: {
-    open: 'Text size',
     title: 'Text size',
     smaller: 'Smaller text',
     larger: 'Larger text',
@@ -520,6 +510,8 @@ const EN: PanelCopy = {
     value: (percent) => `Text size ${percent}`,
   },
   app: {
+    starBanner: 'Find it useful?',
+    starBannerAction: 'Star it on GitHub →',
     openSettings: 'Open settings',
     settings: 'Settings',
     openSessions: 'Session history',
@@ -531,10 +523,6 @@ const EN: PanelCopy = {
     deleteSessionConfirm: (title) => `Delete “${title}”? Its conversation history will be removed permanently.`,
     deleteSessionFailed: (reason) => `Delete failed: ${reason}`,
     deletePurgeFailed: (reason) => `Removed from the list, but file cleanup failed (it may reappear after dsh restarts): ${reason}`,
-    emptyTitle: 'Hand me the current page',
-    emptyDescription: 'I can read the page, find information, and click, fill, or navigate for you.',
-    overviewPage: 'Give me an overview',
-    overviewPrompt: 'First give me an overview of the current page, tell me the most important information, and wait for my next instruction.',
     assistant: 'Assistant',
     assistantWorking: 'Assistant is working',
     organizingResults: 'Organizing results',
@@ -685,14 +673,11 @@ const ZH: PanelCopy = {
     closedTab: '已关闭的标签页',
     questionTitle: '助手要跟随当前页面吗？',
     questionBody: (controlled, active) => `助手仍绑定“${controlled}”，你刚切到“${active}”。选择前，浏览器操作会暂停。`,
-    keep: '助手留在原页面',
-    keepAlways: '助手留在原页面并不再询问',
-    follow: '助手跟随当前页面',
-    returnToAssistant: '跳转回到助手页面',
+    keep: '留在原页',
+    follow: '跟随当前页',
     backgroundTitle: () => '助手仍在原页面',
     backgroundBody: (active) => `你正在查看“${active}”，后续浏览器操作仍会在原页面执行。`,
     pinnedBody: (active) => `你正在查看“${active}”，后续浏览器操作仍会在原页面执行；切换标签页时不会再询问。`,
-    askAgain: '切换标签页时重新询问',
     followCurrent: '改为跟随当前页面',
     lostTitle: '受控标签页已关闭',
     lostBody: '为避免操作错页，浏览器操作已暂停。',
@@ -831,7 +816,6 @@ const ZH: PanelCopy = {
     copyError: '复制失败',
   },
   textSize: {
-    open: '字号',
     title: '字号',
     smaller: '缩小字号',
     larger: '放大字号',
@@ -839,6 +823,8 @@ const ZH: PanelCopy = {
     value: (percent) => `字号 ${percent}`,
   },
   app: {
+    starBanner: '觉得好用？',
+    starBannerAction: '去 GitHub 点个 Star →',
     openSettings: '打开设置',
     settings: '设置',
     openSessions: '历史会话',
@@ -850,10 +836,6 @@ const ZH: PanelCopy = {
     deleteSessionConfirm: (title) => `确定删除「${title}」吗？对话历史将被永久移除。`,
     deleteSessionFailed: (reason) => `删除失败：${reason}`,
     deletePurgeFailed: (reason) => `已从列表移除，但文件清理失败（dsh 重启后可能再次出现）：${reason}`,
-    emptyTitle: '把当前页面交给我',
-    emptyDescription: '我可以阅读页面、查找信息，也可以替你点击、填写和导航。',
-    overviewPage: '先概览这个页面',
-    overviewPrompt: '请先概览当前页面，告诉我最重要的信息，并等待我的下一步指令。',
     assistant: '助手',
     assistantWorking: '助手正在处理',
     organizingResults: '正在整理结果',

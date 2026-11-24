@@ -464,6 +464,7 @@ async function persistSettings(next: Partial<Settings>): Promise<void> {
   const revokesDevTools = changesDevTools && (settings.allowDevTools || sessionDevToolsGrant) && !updated.allowDevTools
   const previousControlledTabId = tabAffinity.snapshot().controlled?.tabId
   settings = updated
+  if (tabAffinity.setAlwaysStay(!updated.askOnTabSwitch)) broadcastTabAffinity()
   if (!updated.unrestrictedBrowserAccess) unrestrictedAccessActive = false
   if (revokesDevTools) sessionDevToolsGrant = false
   syncSelectionWatch()

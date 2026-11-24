@@ -301,6 +301,15 @@ export class TabAffinityController {
     return true
   }
 
+  /** Apply the "ask on tab switch" preference; returns whether visible state changed. */
+  setAlwaysStay(value: boolean): boolean {
+    if (this.alwaysStay === value) return false
+    this.alwaysStay = value
+    this.keptActiveTabId = null
+    this.revision += 1
+    return true
+  }
+
   /** Rehydrate the fail-closed state when the prior controlled tab was lost. */
   restoreLost(): boolean {
     if (this.controlled !== null || this.hasBound || this.lost) return false
