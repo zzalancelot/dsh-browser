@@ -19,6 +19,7 @@ import {
 } from './frames.ts'
 import { wrapUntrustedContent } from '../security/untrusted.ts'
 import { approvalPromptForCall, originFromUrl } from './authorization.ts'
+import { consumeHostVisit } from './host-visit-quota.ts'
 import { waitForNextDocumentReady, waitForTabStatusComplete } from './navigation.ts'
 import type { ApprovalAuthorization, ApprovalPrompt } from '../security/approval.ts'
 import { getUiLocale } from '../i18n.ts'
@@ -445,6 +446,10 @@ async function dispatchTabNativeTool(
         const requested = parseHttpUrl(call.args.url)
         if (requested === undefined) {
           return { ok: false, error: { code: 'action-failed', message: 'url must be a complete http or https URL.' } }
+        }
+        const quota = await consumeHostVisit(requested)
+        if (!quota.ok) {
+          return { ok: false, error: { code: 'action-failed', message: quota.message ?? 'Host visit quota exceeded.' } }
         }
         commitAction?.()
         operation = chrome.tabs.update(tabId, { url: requested.href })
@@ -1766,6 +1771,12 @@ export async function dispatchOpenTab(
     return cancelled()
   }
 
+  const quota = await consumeHostVisit(parsed)
+  if (!quota.ok) {
+    await removeCreatedTab(tabId)
+    return { ok: false, error: { code: 'action-failed', message: quota.message ?? 'Host visit quota exceeded.' } }
+  }
+
   const navigationWait = waitForNextDocumentReady(tabId, 0, undefined, signal)
   try {
     created = await chrome.tabs.update(tabId, { url: parsed.href })
@@ -1897,6 +1908,12 @@ export async function dispatchOpenWindow(
   if (isCancelled(call, signal)) {
     await removeCreatedWindow(windowId)
     return cancelled()
+  }
+
+  const quota = await consumeHostVisit(parsed)
+  if (!quota.ok) {
+    await removeCreatedWindow(windowId)
+    return { ok: false, error: { code: 'action-failed', message: quota.message ?? 'Host visit quota exceeded.' } }
   }
 
   const navigationWait = waitForNextDocumentReady(tabId, 0, undefined, signal)
